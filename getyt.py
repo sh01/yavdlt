@@ -478,7 +478,9 @@ def get_embedded_yturls(url):
 
 if (__name__ == '__main__'):
    import optparse
+   import os.path
    import sys
+   
    logger = logging.getLogger()
    log = logger.log
    
@@ -493,6 +495,7 @@ if (__name__ == '__main__'):
    
    op = optparse.OptionParser(usage="%prog [options] <yt video id>*")
    op.add_option('-d', '--data-type', dest='dtype', default=''.join(dt_map.keys()), help='Data types to download')
+   op.add_option('--clobber', default=False, action='store_true', help='Refetch videos and overwrite existing video files')
    
    (opts, args) = op.parse_args()
    log(50, 'Init.')
@@ -510,7 +513,20 @@ if (__name__ == '__main__'):
    for vid in vids:
       log(20, 'Fetching data for video with id %r.' % (vid,))
       ref = YTVideoRef(vid)
+      
       ref.get_token_blocking()
+      fns = [ref.choose_fn(ext) for ext in ref.fmt_exts.values()]
+      for fn in fns:
+         if (os.path.exists(fn)):
+            vf_exists = True
+            break
+      else:
+         vf_exists = False
+      
+      if (vf_exists and (not opts.clobber)):
+         log(20, '%r exits already; skipping this video.' % (fn,))
+         continue
+      
       for c in opts.dtype:
          getattr(ref,dt_map[c])()
    
