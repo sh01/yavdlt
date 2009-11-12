@@ -289,7 +289,7 @@ class YTVideoRef:
          if (m_err is None):
             raise StandardError("YT markup failed to match expectations; can't extract video token.")
          
-         err_text = m_err.groupdict()['text'].strip()
+         err_text = xml_unescape(m_err.groupdict()['text'].strip())
          raise YTError('YT refuses to deliver token: %r' % (err_text,))
         
       tok = m.groupdict()['field_t']
