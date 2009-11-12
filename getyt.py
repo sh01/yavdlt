@@ -240,11 +240,14 @@ class YTimedTextEntry:
          self.text
       )
 
+class YTError(StandardError):
+   pass
 
 class YTVideoRef:
    re_tok = re.compile('"t": "(?P<field_t>[^"]*)"')
    re_title = re.compile('<h1[^>]*>(?P<text>[^<]*)</h1[^>]*>')
-
+   re_err = re.compile('<div id="error-box"[^>]*>(?P<text>[^<]+)</div>')
+   
    logger = logging.getLogger('YTVideoRef')
    log = logger.log
    fmt_exts = {
@@ -282,7 +285,13 @@ class YTVideoRef:
       content = urllib2.urlopen(url).read()
       m = self.re_tok.search(content)
       if (m is None):
-         raise StandardError("YT markup failed to match expectations; can't extract video token.")
+         m_err = self.re_err.search(content)
+         if (m_err is None):
+            raise StandardError("YT markup failed to match expectations; can't extract video token.")
+         
+         err_text = m_err.groupdict()['text'].strip()
+         raise YTError('YT refuses to deliver token: %r' % (err_text,))
+        
       tok = m.groupdict()['field_t']
       
       m = self.re_title.search(content)
