@@ -298,9 +298,9 @@ class YTVideoRef:
       title = self.title
       mtitle = ''
       for c in title:
-         if (c.isalnum()):
+         if (c.isalnum() or (c in '-')):
             mtitle += c
-         elif (c in (' ', '-', '_')):
+         elif (c in ' _'):
             mtitle += '_'
       
       if (ext is None):
@@ -360,6 +360,9 @@ class YTVideoRef:
       ttl = YTimedTextList.build_from_markup(self.vid, content)
       tdata = ttl.fetch_all_blocking()
       
+      if (len(tdata) < 1):
+         self.log(20, 'No timedtext streams found.')
+
       for ((name, lc, ttel)) in tdata:
          lc = lc.replace('/', '').replace('\x00','')
          name = name.replace('/', '').replace('\x00','')
