@@ -414,7 +414,9 @@ class YTVideoRef:
       return 'http://www.youtube.com/get_video?video_id=%s&t=%s&fmt=%d' % (self.vid, self.tok, fmt)
    
 
-def arg2vid(s):
+def arg2vidset(s, fallback=True):
+   import logging
+   log = logging.getLogger('arg2vidset').log
    res = (
       re.compile('http://www.youtube.[^/]+/watch?.*v=(?P<vid>[^&]+)'),
       re.compile('http://www.youtube.com/v/(?P<vid>[^&]+)')
@@ -426,9 +428,44 @@ def arg2vid(s):
       m = rx.search(s)
       if (m is None):
          continue
-      return m.groupdict()['vid']
+      return set((m.groupdict()['vid'],))
+   else:
+      if (fallback):
+         log(20, "%r doesn't look like a direct video spec ... treating as url to embedding document." % (s,))
+         rv = set()
+         for url in get_embedded_yturls(s):
+            rv.update(arg2vidset(url))
+         return rv
    
    raise ValueError('Unable to get video id from string %r.' % (s,))
+
+
+_re_embedded_split = re.compile('<object')
+_re_embedded_url1 = re.compile('<param name="movie" value="(?P<yt_url>http://[^"/]*youtube.[^"/]+/v/[^"]+)"')
+_re_embedded_url2 = re.compile('<embed src="(?P<yt_url>http://[^"/]*youtube.[^"/]+/v/[^"]+)"')
+
+def get_embedded_yturls(url):
+   import logging
+   log = logging.getLogger('embed_fetch').log
+   
+   log(20, 'Fetching embedding document %r' % (url,))
+   req = urllib2.urlopen(url)
+   log(20, 'Extracting urls for embedded yt videos.')
+   
+   html = req.read()
+   html_fragments = _re_embedded_split.split(html)
+   urls = []
+   for fragment in html_fragments:
+      m1 = _re_embedded_url1.search(fragment)
+      m2 = _re_embedded_url2.search(fragment)
+      if not (m1 is None):
+         urls.append(m1.groupdict()['yt_url'])
+      if not (m2 is None):
+         urls.append(m2.groupdict()['yt_url'])
+   
+   #urls = [xml_unescape(u) for u in urls]
+   return set(urls)
+   
 
 if (__name__ == '__main__'):
    import optparse
@@ -455,8 +492,13 @@ if (__name__ == '__main__'):
       if not (c in dt_map):
          raise ValueError('Unknown data type %r.' % (c,))
    
+   vids = set()
+   
    for vid_str in args:
-      vid = arg2vid(vid_str)
+      vids.update(arg2vidset(vid_str))
+   
+   log(20, 'Final vid set: {0}'.format(vids))
+   for vid in vids:
       log(20, 'Fetching data for video with id %r.' % (vid,))
       ref = YTVideoRef(vid)
       ref.get_token_blocking()
