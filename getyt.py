@@ -243,10 +243,16 @@ class YTimedTextEntry:
 class YTError(StandardError):
    pass
 
+class YTDefaultFmt:
+   def __str__(self):
+      return 'default'
+
 class YTVideoRef:
    re_tok = re.compile('"t": "(?P<field_t>[^"]*)"')
    re_title = re.compile('<h1[^>]*>(?P<text>[^<]*)</h1[^>]*>')
    re_err = re.compile('<div id="error-box"[^>]*>(?P<text>[^<]+)</div>')
+   
+   FMT_DEFAULT = YTDefaultFmt()
    
    logger = logging.getLogger('YTVideoRef')
    log = logger.log
@@ -258,6 +264,7 @@ class YTVideoRef:
       22: 'mp4',
       34: 'flv',
       35: 'flv',
+      FMT_DEFAULT: 'flv'
    }
    
    fmts = (
@@ -266,7 +273,8 @@ class YTVideoRef:
       35, # flv/h264, SQ
       34, # flv/h264, LQ
        6, # flv/sor, SQ
-       5  # flv/sor, LQ
+       5, # flv/sor, LQ
+    FMT_DEFAULT # some flv thing
     )
    
    def __init__(self, vid, fmt=None):
@@ -407,20 +415,24 @@ class YTVideoRef:
                url = response.getheader('location')
          
          if (rc == 200):
-            self.log(20, 'Fmt %d is good ... using that.' % (fmt,))
+            self.log(20, 'Fmt %s is good ... using that.' % (fmt,))
             self._fmt = fmt
             return url
          
-         self.log(20, 'Tried to get video in fmt %d and failed (http response %r).' % (fmt, rc))
+         self.log(20, 'Tried to get video in fmt %s and failed (http response %r).' % (fmt, rc))
          
       else:
-         self.log(38, 'None of the attempted formats worked out.' % (fmt,))
+         self.log(38, 'None of the attempted formats worked out.')
          return None
    
    def get_video_url(self, fmt):
       if (self.tok is None):
          raise ValueError('Need to get token first.')
-      return 'http://www.youtube.com/get_video?video_id=%s&t=%s&fmt=%d' % (self.vid, self.tok, fmt)
+      if (fmt is self.FMT_DEFAULT):
+         fmtstr = ''
+      else:
+         fmtstr = '&fmt=%d' % (fmt,)
+      return 'http://www.youtube.com/get_video?video_id=%s&t=%s%s' % (self.vid, self.tok, fmtstr)
    
 
 def arg2vidset(s, fallback=True):
@@ -496,9 +508,14 @@ if (__name__ == '__main__'):
    op = optparse.OptionParser(usage="%prog [options] <yt video id>*")
    op.add_option('-d', '--data-type', dest='dtype', default=''.join(dt_map.keys()), help='Data types to download')
    op.add_option('--clobber', default=False, action='store_true', help='Refetch videos and overwrite existing video files')
+   op.add_option('--fmt', default=None, help="YT format number to use.")
    
    (opts, args) = op.parse_args()
    log(50, 'Init.')
+   
+   fmt = opts.fmt
+   if not (fmt is None):
+      fmt = int(fmt)
    
    for c in opts.dtype:
       if not (c in dt_map):
@@ -512,7 +529,7 @@ if (__name__ == '__main__'):
    log(20, 'Final vid set: {0}'.format(vids))
    for vid in vids:
       log(20, 'Fetching data for video with id %r.' % (vid,))
-      ref = YTVideoRef(vid)
+      ref = YTVideoRef(vid, fmt)
       
       ref.get_token_blocking()
       fns = [ref.choose_fn(ext) for ext in ref.fmt_exts.values()]
