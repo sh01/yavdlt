@@ -439,8 +439,8 @@ def arg2vidset(s, fallback=True):
    import logging
    log = logging.getLogger('arg2vidset').log
    res = (
-      re.compile('http://www.youtube.[^/]+/watch?.*v=(?P<vid>[^&]+)'),
-      re.compile('http://www.youtube.com/v/(?P<vid>[^&]+)')
+      re.compile('http://www.youtube.[^/]+/watch?.*v=(?P<vid>[^&#]+)'),
+      re.compile('http://www.youtube.com/v/(?P<vid>[^&#]+)')
    )
    
    if (len(s) == 11):
