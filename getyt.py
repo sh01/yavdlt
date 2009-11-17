@@ -455,7 +455,7 @@ def arg2vidset(s, fallback=True):
          log(20, "%r doesn't look like a direct video spec ... treating as url to embedding document." % (s,))
          rv = set()
          for url in get_embedded_yturls(s):
-            rv.update(arg2vidset(url))
+            rv.update(arg2vidset(url, fallback=False))
          return rv
    
    raise ValueError('Unable to get video id from string %r.' % (s,))
