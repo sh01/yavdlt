@@ -444,7 +444,7 @@ def arg2vidset(s, fallback=True):
    )
    
    if (len(s) == 11):
-      return s
+      return [s]
    for rx in res:
       m = rx.search(s)
       if (m is None):
