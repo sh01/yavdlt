@@ -439,8 +439,8 @@ def arg2vidset(s, fallback=True):
    import logging
    log = logging.getLogger('arg2vidset').log
    res = (
-      re.compile('http://www.youtube.[^/]+/watch?.*v=(?P<vid>[^&#]+)'),
-      re.compile('http://www.youtube.com/v/(?P<vid>[^&#]+)')
+      re.compile('http://www.youtube(?:-nocookie)?\.[^/]+/watch?.*v=(?P<vid>[^&#]+)'),
+      re.compile('http://www.youtube(?:-nocookie)?\.[^/]+/v/(?P<vid>[^&#]+)')
    )
    
    if (len(s) == 11):
@@ -462,8 +462,8 @@ def arg2vidset(s, fallback=True):
 
 
 _re_embedded_split = re.compile('<object')
-_re_embedded_url1 = re.compile('<param name="movie" value="(?P<yt_url>http://[^"/]*youtube.[^"/]+/v/[^"]+)"')
-_re_embedded_url2 = re.compile('<embed src="(?P<yt_url>http://[^"/]*youtube.[^"/]+/v/[^"]+)"')
+_re_embedded_url1 = re.compile('<param name="movie" value="(?P<yt_url>http://[^"/]*youtube(?:-nocookie)?\.[^"/]+/v/[^"]+)"')
+_re_embedded_url2 = re.compile('<embed src="(?P<yt_url>http://[^"/]*youtube(?:-nocookie)?\.[^"/]+/v/[^"]+)"')
 
 def get_embedded_yturls(url):
    import logging
