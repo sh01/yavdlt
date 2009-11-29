@@ -295,9 +295,11 @@ class YTVideoRef:
       return 'http://www.google.com/reviews/y/read2?video_id=%s' % (self.vid,)
    
    def get_token_blocking(self):
+      self.log(20, 'Acquiring YT metadata.')
       try:
          self.get_token_getvideoinfo()
       except YTError:
+         self.log(20, 'Video info retrieval failed; falling back to retrieval of metadata from watch page.')
          self.get_token_watch()
    
    def get_token_getvideoinfo(self):
@@ -323,7 +325,6 @@ class YTVideoRef:
       self.got_video_info = True
    
    def get_token_watch(self):
-      self.log(20, 'Acquiring YT video token.')
       if (self.fmt):
          fmt = self.fmt
       else:
