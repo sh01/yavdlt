@@ -433,6 +433,57 @@ class YTVideoRef:
       else:
          fmtstr = '&fmt=%d' % (fmt,)
       return 'http://www.youtube.com/get_video?video_id=%s&t=%s%s' % (self.vid, self.tok, fmtstr)
+
+
+class YTPlayListRef:
+   logger = logging.getLogger('YTPlaylistRef')
+   log = logger.log
+   
+   pl_base_url = 'http://gdata.youtube.com/feeds/api/playlists/%s?v=2'
+   def __init__(self, plid):
+      self.plid = plid
+      self.vids = []
+   
+   def fetch_pl(self):
+      """Fetch playlist and parse out vids."""
+      pl_url = self.pl_base_url % self.plid
+      self.log(20, 'Retrieving playlist from %r.' % (pl_url,))
+      req = urllib2.urlopen(pl_url)
+      pl_markup = req.read()
+      self.log(20, 'Parsing playlist data.')
+      pl_dom = xml.dom.minidom.parseString(pl_markup)
+      link_nodes = pl_dom.getElementsByTagName('link')
+      
+      vids_set = set()
+      vids_l = []
+      
+      for node in link_nodes:
+         try:
+            tt = node.attributes['type'].value
+         except KeyError:
+            continue
+         
+         if (tt != 'text/html'):
+            continue
+         
+         try:
+            node_url = node.attributes['href'].value
+         except KeyError:
+            continue
+         
+         try:
+            node_vids = arg2vidset(node_url, fallback=False)
+         except ValueError:
+            continue
+         
+         for vid in node_vids:
+            if (vid in vids_set):
+               continue
+            vids_set.add(vid)
+            vids_l.append(vid)
+      
+      self.log(20, 'Got %d playlist entries: %r' % (len(vids_l), vids_l))
+      self.vids = vids_l
    
 
 def arg2vidset(s, fallback=True):
@@ -509,6 +560,7 @@ if (__name__ == '__main__'):
    op.add_option('-d', '--data-type', dest='dtype', default=''.join(dt_map.keys()), help='Data types to download')
    op.add_option('--clobber', default=False, action='store_true', help='Refetch videos and overwrite existing video files')
    op.add_option('--fmt', default=None, help="YT format number to use.")
+   op.add_option('--playlist', default=None, help='Parse (additional) video ids from specified playlist', metavar='PLAYLIST_ID')
    
    (opts, args) = op.parse_args()
    log(50, 'Init.')
@@ -525,6 +577,11 @@ if (__name__ == '__main__'):
    
    for vid_str in args:
       vids.update(arg2vidset(vid_str))
+   
+   if (opts.playlist):
+      plr = YTPlayListRef(opts.playlist)
+      plr.fetch_pl()
+      vids.update(plr.vids)
    
    log(20, 'Final vid set: {0}'.format(vids))
    for vid in vids:
