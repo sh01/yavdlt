@@ -256,6 +256,7 @@ class YTVideoRef:
    FMT_DEFAULT = YTDefaultFmt()
    URL_FMT_WATCH = 'http://www.youtube.com/watch?v=%s&fmt=%s'
    URL_FMT_GETVIDEO = 'http://www.youtube.com/get_video?video_id=%s&t=%s%s'
+   URL_FMT_GETVIDEOINFO = 'http://youtube.com/get_video_info?video_id=%s'
    
    logger = logging.getLogger('YTVideoRef')
    log = logger.log
@@ -287,12 +288,41 @@ class YTVideoRef:
       self._fmt = None
       self.fmt_url_map = {}
       self.force_fmt_url_map_use = False
+      self.got_video_info = False
       self.title = None
    
    def url_get_annots(self):
       return 'http://www.google.com/reviews/y/read2?video_id=%s' % (self.vid,)
    
    def get_token_blocking(self):
+      try:
+         self.get_token_getvideoinfo()
+      except YTError:
+         self.get_token_watch()
+   
+   def get_token_getvideoinfo(self):
+      from urllib import splitvalue, unquote, unquote_plus
+      
+      url = self.URL_FMT_GETVIDEOINFO % (self.vid,)
+      content = urllib2.urlopen(url).read()
+      def uqv((key, val)):
+         return (key, unquote_plus(val))
+      
+      vi = dict(uqv(splitvalue(cfrag)) for cfrag in content.split('&'))
+      
+      if (vi['status'] != 'ok'):
+         self.log(20, 'YT Refuses to deliver video info: %r' % (vi,))
+         raise YTError('YT Refuses to deliver video info: %r' % (vi,))
+      
+      self.tok = vi['token']
+      self.title = vi['title']
+      
+      ums = vi['fmt_url_map']
+      self.fmt_url_map_update(ums)
+      
+      self.got_video_info = True
+   
+   def get_token_watch(self):
       self.log(20, 'Acquiring YT video token.')
       if (self.fmt):
          fmt = self.fmt
@@ -325,7 +355,7 @@ class YTVideoRef:
       self.log(20, 'Acquired token %r.' % (tok,))
       self.tok = tok
       
-      self.fmt_url_map_update(content)
+      self.fmt_url_map_update_markup(content)
    
    def choose_fn(self, ext=None):
       title = self.title
@@ -408,16 +438,9 @@ class YTVideoRef:
    def fmt_url_map_fetch_update(self, fmt):
       url = self.URL_FMT_WATCH % (self.vid, fmt)
       content = urllib2.urlopen(url).read()
-      self.fmt_url_map_update(content)
-
-   def fmt_url_map_update(self, markup):
-      from urllib import unquote
-      
-      m = self.re_fmt_url_map.search(markup)
-      if (m is None):
-         return
-      ums_raw = m.groupdict()['ums']
-      ums = unquote(ums_raw)
+      self.fmt_url_map_update_markup(content)
+   
+   def fmt_url_map_update(self, ums):
       ums_split = ums.split(',')
       
       for umsf in ums_split:
@@ -427,6 +450,16 @@ class YTVideoRef:
          if not (fmt in self.fmt_url_map):
             self.log(20, 'Caching direct url for new format %d.' % (fmt,))
          self.fmt_url_map[fmt] = url
+   
+   def fmt_url_map_update_markup(self, markup):
+      from urllib import unquote
+      
+      m = self.re_fmt_url_map.search(markup)
+      if (m is None):
+         return
+      ums_raw = m.groupdict()['ums']
+      ums = unquote(ums_raw)
+      self.fmt_url_map_update(ums)
    
    def pick_video(self):
       if (self.fmt):
@@ -658,6 +691,7 @@ if (__name__ == '__main__'):
       
       if (opts.watch_sixxs):
          ref.URL_FMT_WATCH = url_mangle_sixxs_46gw(ref.URL_FMT_WATCH)
+         ref.URL_FMT_GETVIDEOINFO = url_mangle_sixxs_46gw(ref.URL_FMT_GETVIDEOINFO)
          ref.force_fmt_url_map_use = True
       
       try:
