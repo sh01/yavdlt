@@ -251,8 +251,11 @@ class YTVideoRef:
    re_tok = re.compile('"t": "(?P<field_t>[^"]*)"')
    re_title = re.compile('<h1[^>]*>(?P<text>[^<]*)</h1[^>]*>')
    re_err = re.compile('<div id="error-box"[^>]*>(?P<text>[^<]+)</div>')
+   re_fmt_url_map = re.compile('"fmt_url_map": *"(?P<ums>[^"]+)"')
    
    FMT_DEFAULT = YTDefaultFmt()
+   URL_FMT_WATCH = 'http://www.youtube.com/watch?v=%s&fmt=%s'
+   URL_FMT_GETVIDEO = 'http://www.youtube.com/get_video?video_id=%s&t=%s%s'
    
    logger = logging.getLogger('YTVideoRef')
    log = logger.log
@@ -282,6 +285,7 @@ class YTVideoRef:
       self.tok = None
       self.fmt = fmt
       self._fmt = None
+      self.fmt_url_map = {}
       self.title = None
    
    def url_get_annots(self):
@@ -289,8 +293,17 @@ class YTVideoRef:
    
    def get_token_blocking(self):
       self.log(20, 'Acquiring YT video token.')
-      url = 'http://www.youtube.com/watch?v=%s' % (self.vid,)
+      if (self.fmt):
+         fmt = self.fmt
+      else:
+         fmt = self.fmts[0]
+      
+      if (fmt is self.FMT_DEFAULT):
+         fmt = ''
+      
+      url = self.URL_FMT_WATCH % (self.vid, fmt)
       content = urllib2.urlopen(url).read()
+      
       m = self.re_tok.search(content)
       if (m is None):
          m_err = self.re_err.search(content)
@@ -310,6 +323,8 @@ class YTVideoRef:
 
       self.log(20, 'Acquired token %r.' % (tok,))
       self.tok = tok
+      
+      self.fmt_url_map_update(content)
    
    def choose_fn(self, ext=None):
       title = self.title
@@ -389,6 +404,21 @@ class YTVideoRef:
          dump_ytannos_ssa(ttel, f)
          f.close()
    
+   def fmt_url_map_update(self, markup):
+      from urllib import unquote
+      
+      m = self.re_fmt_url_map.search(markup)
+      if (m is None):
+         return
+      ums_raw = m.groupdict()['ums']
+      ums = unquote(ums_raw)
+      ums_split = ums.split(',')
+      
+      for umsf in ums_split:
+         (fmt_str, url) = umsf.split('|',1)
+         fmt = int(fmt_str)
+         self.fmt_url_map[fmt] = url
+   
    def pick_video(self):
       if (self.fmt):
          fmts = (self.fmt,)
@@ -398,6 +428,7 @@ class YTVideoRef:
       for fmt in fmts:
          url = self.get_video_url(fmt)
          rc = 301
+         
          while (301 <= rc <= 303):
             (type_, dp) = urllib2.splittype(url)
             (host, path) = urllib2.splithost(dp)
@@ -428,11 +459,16 @@ class YTVideoRef:
    def get_video_url(self, fmt):
       if (self.tok is None):
          raise ValueError('Need to get token first.')
+      
+      if (fmt in self.fmt_url_map):
+         self.log(20, 'Using cached direct video url.')
+         return self.fmt_url_map[fmt]
+      
       if (fmt is self.FMT_DEFAULT):
          fmtstr = ''
       else:
          fmtstr = '&fmt=%d' % (fmt,)
-      return 'http://www.youtube.com/get_video?video_id=%s&t=%s%s' % (self.vid, self.tok, fmtstr)
+      return self.URL_FMT_GETVIDEO % (self.vid, self.tok, fmtstr)
 
 
 class YTPlayListRef:
@@ -537,7 +573,16 @@ def get_embedded_yturls(url):
    
    #urls = [xml_unescape(u) for u in urls]
    return set(urls)
-   
+
+
+def url_mangle_sixxs_46gw(url):
+   from urllib import splithost, splittype
+   (utype, urest) = splittype(url)
+   (uhost, upath) = splithost(urest)
+   uhost += '.sixxs.org'
+   rv = '%s://%s%s' % (utype, uhost, upath)
+   return rv
+
 
 if (__name__ == '__main__'):
    import optparse
@@ -561,6 +606,7 @@ if (__name__ == '__main__'):
    op.add_option('--clobber', default=False, action='store_true', help='Refetch videos and overwrite existing video files')
    op.add_option('--fmt', default=None, help="YT format number to use.")
    op.add_option('--playlist', default=None, help='Parse (additional) video ids from specified playlist', metavar='PLAYLIST_ID')
+   op.add_option('--watch-ipv6-sixxs', dest='watch_sixxs', default=False, action='store_true', help='Fetch watch pages through sixxs ipv6-to-ipv4 gateway.')
    
    (opts, args) = op.parse_args()
    log(50, 'Init.')
@@ -598,12 +644,16 @@ if (__name__ == '__main__'):
       log(20, 'Fetching data for video with id %r.' % (vid,))
       ref = YTVideoRef(vid, fmt)
       
+      if (opts.watch_sixxs):
+         ref.URL_FMT_WATCH = url_mangle_sixxs_46gw(ref.URL_FMT_WATCH)
+      
       try:
          ref.get_token_blocking()
       except YTError:
          log(30, 'Failed to retrieve video %r:' % (vid,), exc_info=True)
          vids_failed.append(vid)
          continue
+      
       fns = [ref.choose_fn(ext) for ext in ref.fmt_exts.values()]
       for fn in fns:
          if (os.path.exists(fn)):
