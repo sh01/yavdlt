@@ -286,6 +286,7 @@ class YTVideoRef:
       self.fmt = fmt
       self._fmt = None
       self.fmt_url_map = {}
+      self.force_fmt_url_map_use = False
       self.title = None
    
    def url_get_annots(self):
@@ -404,6 +405,11 @@ class YTVideoRef:
          dump_ytannos_ssa(ttel, f)
          f.close()
    
+   def fmt_url_map_fetch_update(self, fmt):
+      url = self.URL_FMT_WATCH % (self.vid, fmt)
+      content = urllib2.urlopen(url).read()
+      self.fmt_url_map_update(content)
+
    def fmt_url_map_update(self, markup):
       from urllib import unquote
       
@@ -417,6 +423,9 @@ class YTVideoRef:
       for umsf in ums_split:
          (fmt_str, url) = umsf.split('|',1)
          fmt = int(fmt_str)
+         
+         if not (fmt in self.fmt_url_map):
+            self.log(20, 'Caching direct url for new format %d.' % (fmt,))
          self.fmt_url_map[fmt] = url
    
    def pick_video(self):
@@ -459,6 +468,9 @@ class YTVideoRef:
    def get_video_url(self, fmt):
       if (self.tok is None):
          raise ValueError('Need to get token first.')
+      
+      if (self.force_fmt_url_map_use and (not (fmt in self.fmt_url_map))):
+         self.fmt_url_map_fetch_update(fmt)
       
       if (fmt in self.fmt_url_map):
          self.log(20, 'Using cached direct video url.')
@@ -646,6 +658,7 @@ if (__name__ == '__main__'):
       
       if (opts.watch_sixxs):
          ref.URL_FMT_WATCH = url_mangle_sixxs_46gw(ref.URL_FMT_WATCH)
+         ref.force_fmt_url_map_use = True
       
       try:
          ref.get_token_blocking()
