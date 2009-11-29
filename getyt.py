@@ -378,6 +378,10 @@ class YTVideoRef:
       self.fetch_tt()
    
    def fetch_video(self):
+      from fcntl import fcntl, F_SETFL
+      from select import select
+      from os import O_NONBLOCK
+      
       if (self.tok is None):
          self.get_token_blocking()
       
@@ -388,9 +392,27 @@ class YTVideoRef:
       self.log(20, 'Fetching data from %r.' % (url,))
       
       req = urllib2.urlopen(url)
-      content = req.read()
-      self.log(20, 'Got %d bytes of video data.' % (len(content,)))
-      self.log(20, 'Writing video data to %r.' % (fn_out,))
+      
+      try:
+         cl = int(req.headers.get('content-length'))
+      except (KeyError, ValueError):
+         cl = None
+      
+      self.log(20, 'Total length is %d bytes.' % (cl,))
+      
+      content_fragments = []
+      cl_g = 0
+      while (True):
+         data_read = req.read(1024*1024)
+         content_fragments.append(data_read)
+         if (len(data_read) == 0):
+            break
+         cl_g += len(data_read)
+         self.log(15, 'Progress: %d (%.2f%%)' % (cl_g, float(cl_g)/cl*100))
+      
+      content = ''.join(content_fragments)
+      
+      self.log(20, 'Writing %d bytes of video data to %r.' % (len(content), fn_out))
       f = file(fn_out, 'wb')
       f.write(content)
       f.close()
