@@ -669,6 +669,7 @@ if (__name__ == '__main__'):
       for c in opts.dtype:
          getattr(ref,dt_map[c])()
    
-   log(30, 'Failed vids: %s' % (vids_failed,))
+   if (vids_failed):
+      log(30, 'Failed to retrieve videos: %s' % (vids_failed,))
    log(50, 'All done.')
 
