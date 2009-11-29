@@ -573,22 +573,37 @@ if (__name__ == '__main__'):
       if not (c in dt_map):
          raise ValueError('Unknown data type %r.' % (c,))
    
-   vids = set()
+   vids_set = set()
+   vids = []
+   
+   def update_vids(s):
+      for vid in s:
+         if (vid in vids_set):
+            continue
+         vids_set.add(vid)
+         vids.append(vid)
    
    for vid_str in args:
-      vids.update(arg2vidset(vid_str))
+      update_vids(arg2vidset(vid_str))
    
    if (opts.playlist):
       plr = YTPlayListRef(opts.playlist)
       plr.fetch_pl()
-      vids.update(plr.vids)
+      update_vids(plr.vids)
    
    log(20, 'Final vid set: {0}'.format(vids))
+   vids_failed = []
+   
    for vid in vids:
       log(20, 'Fetching data for video with id %r.' % (vid,))
       ref = YTVideoRef(vid, fmt)
       
-      ref.get_token_blocking()
+      try:
+         ref.get_token_blocking()
+      except YTError:
+         log(30, 'Failed to retrieve video %r:' % (vid,), exc_info=True)
+         vids_failed.append(vid)
+         continue
       fns = [ref.choose_fn(ext) for ext in ref.fmt_exts.values()]
       for fn in fns:
          if (os.path.exists(fn)):
@@ -604,5 +619,6 @@ if (__name__ == '__main__'):
       for c in opts.dtype:
          getattr(ref,dt_map[c])()
    
+   log(30, 'Failed vids: %s' % (vids_failed,))
    log(50, 'All done.')
 
