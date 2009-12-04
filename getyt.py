@@ -268,12 +268,14 @@ class YTVideoRef:
       22: 'mp4',
       34: 'flv',
       35: 'flv',
+      37: 'mp4',
       FMT_DEFAULT: 'flv'
    }
    
    fmts = (
       18, # mp4/h264, SQ
       22, # mp4/h264, HQ
+      37, # mp4/h264, HQ+
       35, # flv/h264, SQ
       34, # flv/h264, LQ
        6, # flv/sor, SQ
@@ -281,7 +283,16 @@ class YTVideoRef:
     FMT_DEFAULT # some flv thing
     )
    
-   def __init__(self, vid, fmt=None):
+   fmts_mq = (
+      37,
+      22,
+      35,
+      18,
+      34,
+      FMT_DEFAULT
+   )
+
+   def __init__(self, vid, fmt=None, maximize_quality=False):
       self.vid = vid
       self.tok = None
       self.fmt = fmt
@@ -290,6 +301,7 @@ class YTVideoRef:
       self.force_fmt_url_map_use = False
       self.got_video_info = False
       self.title = None
+      self.maximize_quality = maximize_quality
    
    def url_get_annots(self):
       return 'http://www.google.com/reviews/y/read2?video_id=%s' % (self.vid,)
@@ -402,6 +414,12 @@ class YTVideoRef:
       
       content_fragments = []
       cl_g = 0
+      
+      try:
+         f = file(fn_out, 'r+b')
+      except IOError:
+         f = file(fn_out, 'w+b')
+      
       while (True):
          data_read = req.read(1024*1024)
          content_fragments.append(data_read)
@@ -409,12 +427,9 @@ class YTVideoRef:
             break
          cl_g += len(data_read)
          self.log(15, 'Progress: %d (%.2f%%)' % (cl_g, float(cl_g)/cl*100))
+         f.write(data_read)
       
-      content = ''.join(content_fragments)
-      
-      self.log(20, 'Writing %d bytes of video data to %r.' % (len(content), fn_out))
-      f = file(fn_out, 'wb')
-      f.write(content)
+      f.truncate()
       f.close()
    
    def fetch_annotations(self):
@@ -487,6 +502,8 @@ class YTVideoRef:
    def pick_video(self):
       if (self.fmt):
          fmts = (self.fmt,)
+      elif (self.maximize_quality):
+         fmts = self.fmts_mq
       else:
          fmts = self.fmts
       
@@ -673,6 +690,7 @@ if (__name__ == '__main__'):
    op.add_option('-d', '--data-type', dest='dtype', default=''.join(dt_map.keys()), help='Data types to download')
    op.add_option('--clobber', default=False, action='store_true', help='Refetch videos and overwrite existing video files')
    op.add_option('--fmt', default=None, help="YT format number to use.")
+   op.add_option('--hd', default=False, action='store_true', help='Optimize for quality; get highest-resolution files available.')
    op.add_option('--playlist', default=None, help='Parse (additional) video ids from specified playlist', metavar='PLAYLIST_ID')
    op.add_option('--watch-ipv6-sixxs', dest='watch_sixxs', default=False, action='store_true', help='Fetch watch pages through sixxs ipv6-to-ipv4 gateway.')
    
@@ -710,7 +728,7 @@ if (__name__ == '__main__'):
    
    for vid in vids:
       log(20, 'Fetching data for video with id %r.' % (vid,))
-      ref = YTVideoRef(vid, fmt)
+      ref = YTVideoRef(vid, fmt, maximize_quality=opts.hd)
       
       if (opts.watch_sixxs):
          ref.URL_FMT_WATCH = url_mangle_sixxs_46gw(ref.URL_FMT_WATCH)
