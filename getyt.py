@@ -90,12 +90,16 @@ class YTAnnotation(YTAnnotationBase):
          kwargs['r2'] = YTAnnotationRR.build_from_xmlnode(regions[1])
       
       if (kwargs['type'] == 'text'):
-         fc = node.getElementsByTagName('TEXT')[0].firstChild
-         if (fc is None):
-            text = ''
+         tns = node.getElementsByTagName('TEXT')
+         if (tns):
+            fc = tns[0].firstChild
+            if (fc is None):
+               text = ''
+            else:
+               text = fc.nodeValue
+            kwargs['content'] = text
          else:
-            text = fc.nodeValue
-         kwargs['content'] = text
+            kwargs['content'] = None
       else:
          kwargs['content'] = None
       
