@@ -19,6 +19,7 @@
 import collections
 import httplib
 import logging
+import urllib
 import urllib2
 import re
 import xml.dom.minidom
@@ -192,7 +193,7 @@ class YTimedTextList:
       return cls(vid, tuple(tdata))
    
    def get_url(self, name, lc):
-      return 'http://video.google.com/timedtext?hl=en&v=%s&type=track&name=%s&lang=%s' % (self.vid, name, lc)
+      return 'http://video.google.com/timedtext?hl=en&v=%s&type=track&name=%s&lang=%s' % (self.vid, urllib.quote(name), urllib.quote(lc))
    
    def fetch_all_blocking(self):
       rv = []
