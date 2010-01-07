@@ -255,7 +255,7 @@ class YTDefaultFmt:
 class YTVideoRef:
    re_tok = re.compile('"t": "(?P<field_t>[^"]*)"')
    re_title = re.compile('<h1[^>]*>(?P<text>[^<]*)</h1[^>]*>')
-   re_err = re.compile('<div id="error-box"[^>]*>(?P<text>[^<]+)</div>')
+   re_err = re.compile('<div[^>]* class="yt-alert-content"[^>]*>(?P<text>[^<]+)</div>')
    re_fmt_url_map = re.compile('"fmt_url_map": *"(?P<ums>[^"]+)"')
    
    FMT_DEFAULT = YTDefaultFmt()
