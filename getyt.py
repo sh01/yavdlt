@@ -308,6 +308,20 @@ class YTVideoRef:
       self.title = None
       self.maximize_quality = maximize_quality
    
+   def mangle_meta_url(self, url):
+      """This function will be called to preprocess YT metadata urls.
+      
+      The default implementation simply returns its first argument.
+      
+      Since YT implements region restrictions by checking the client IP on
+      metadata (i.e. watch or getvideoinfo) requests, we can avoid being
+      affected by those by using various http application-layer gateways for
+      those urls only.
+      
+      If you want to do that, override or overwrite this method and do your URL
+      mangling here."""
+      return url
+   
    def url_get_annots(self):
       return 'http://www.google.com/reviews/y/read2?video_id=%s' % (self.vid,)
    
@@ -323,6 +337,7 @@ class YTVideoRef:
       from urllib import splitvalue, unquote, unquote_plus
       
       url = self.URL_FMT_GETVIDEOINFO % (self.vid,)
+      url = self.mangle_meta_url(url)
       content = urllib2.urlopen(url).read()
       def uqv((key, val)):
          return (key, unquote_plus(val))
@@ -351,6 +366,8 @@ class YTVideoRef:
          fmt = ''
       
       url = self.URL_FMT_WATCH % (self.vid, fmt)
+      url = self.mangle_meta_url(url)
+      
       content = urllib2.urlopen(url).read()
       
       m = self.re_tok.search(content)
@@ -480,6 +497,7 @@ class YTVideoRef:
    
    def fmt_url_map_fetch_update(self, fmt):
       url = self.URL_FMT_WATCH % (self.vid, fmt)
+      url = self.mangle_meta_url(url)
       content = urllib2.urlopen(url).read()
       self.fmt_url_map_update_markup(content)
    
@@ -558,7 +576,9 @@ class YTVideoRef:
          fmtstr = ''
       else:
          fmtstr = '&fmt=%d' % (fmt,)
-      return self.URL_FMT_GETVIDEO % (self.vid, self.tok, fmtstr)
+      
+      rv = self.URL_FMT_GETVIDEO % (self.vid, self.tok, fmtstr)
+      return rv
 
 
 class YTPlayListRef:
@@ -665,6 +685,14 @@ def get_embedded_yturls(url):
    return set(urls)
 
 
+url_mappers = {}
+def url_mapper_reg(key):
+   def r(val):
+      url_mappers[key] = val
+      return val
+   return r
+
+@url_mapper_reg('sixxs')
 def url_mangle_sixxs_46gw(url):
    from urllib import splithost, splittype
    (utype, urest) = splittype(url)
@@ -673,8 +701,19 @@ def url_mangle_sixxs_46gw(url):
    rv = '%s://%s%s' % (utype, uhost, upath)
    return rv
 
+def make_urlmangler_phpproxy_base64(name, baseurl):
+   @url_mapper_reg(name)
+   def url_mangle(url):
+      import base64
+      return ''.join((baseurl, '/index.php?q=', base64.encodestring(url)))
+   return url_mangle
 
-if (__name__ == '__main__'):
+
+make_urlmangler_phpproxy_base64('ubsc', 'http://unblock-blocked-sites.com')
+make_urlmangler_phpproxy_base64('wpbc', 'http://webproxybrowser.com')
+make_urlmangler_phpproxy_base64('amc', 'http://anomani.com')
+
+def main():
    import optparse
    import os.path
    import sys
@@ -697,9 +736,14 @@ if (__name__ == '__main__'):
    op.add_option('--fmt', default=None, help="YT format number to use.")
    op.add_option('--hd', default=False, action='store_true', help='Optimize for quality; get highest-resolution files available.')
    op.add_option('--playlist', default=None, help='Parse (additional) video ids from specified playlist', metavar='PLAYLIST_ID')
-   op.add_option('--watch-ipv6-sixxs', dest='watch_sixxs', default=False, action='store_true', help='Fetch watch pages through sixxs ipv6-to-ipv4 gateway.')
+   op.add_option('--list-meta-gateways', dest='list_meta_gateways', default=False, action='store_true', help='Print lists of known http gateways and exit')
+   op.add_option('--meta-gateway', dest='meta_gateway', default=None, metavar='SERVICENAME', help='Fetch metadata pages through specified HTTP gateway')
    
    (opts, args) = op.parse_args()
+   if (opts.list_meta_gateways):
+      print(sorted(list(url_mappers.keys())))
+      return
+   
    log(50, 'Init.')
    
    fmt = opts.fmt
@@ -712,6 +756,15 @@ if (__name__ == '__main__'):
    
    vids_set = set()
    vids = []
+   
+   if not (opts.meta_gateway is None):
+      try:
+         mgw = url_mappers[opts.meta_gateway]
+      except KeyError:
+         print('Unknown http gateway %r.' % opts.meta_gateway)
+         return
+   else:
+      mgw = None
    
    def update_vids(s):
       for vid in s:
@@ -735,9 +788,8 @@ if (__name__ == '__main__'):
       log(20, 'Fetching data for video with id %r.' % (vid,))
       ref = YTVideoRef(vid, fmt, maximize_quality=opts.hd)
       
-      if (opts.watch_sixxs):
-         ref.URL_FMT_WATCH = url_mangle_sixxs_46gw(ref.URL_FMT_WATCH)
-         ref.URL_FMT_GETVIDEOINFO = url_mangle_sixxs_46gw(ref.URL_FMT_GETVIDEOINFO)
+      if not (mgw is None):
+         ref.mangle_meta_url = mgw
          ref.force_fmt_url_map_use = True
       
       try:
@@ -766,3 +818,5 @@ if (__name__ == '__main__'):
       log(30, 'Failed to retrieve videos: %s' % (vids_failed,))
    log(50, 'All done.')
 
+if (__name__ == '__main__'):
+   main()
