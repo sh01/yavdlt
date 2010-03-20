@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # yt_getter: Download information from youtube
-# Copyright (C) 2009  Sebastian Hagen
+# Copyright (C) 2009,2010  Sebastian Hagen
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -110,7 +110,7 @@ class YTAnnotation(YTAnnotationBase):
       return u'Dialogue: 0,%s,%s,Default,,0000,0000,0000,,%s' % (
          _second2ssa_ts(self.r1.t),
          _second2ssa_ts(self.r2.t), 
-         self.content
+         self.content.replace('\n', '\\N')
       )
    
    def __cmp__(self, other):
@@ -124,7 +124,7 @@ class YTAnnotation(YTAnnotationBase):
    
    def is_sublike(self):
       return not (
-         (self.type != 'text') or
+         (self.content is None) or
          (self.r1 is None) or
          (self.r2 is None) or
          (self.r1.t is None) or
