@@ -162,6 +162,8 @@ def print_ytannos_hr(annotations):
 
 
 def dump_ytannos_ssa(annotations, file_out):
+   # Include UTF-8 BOM; according to user reports some players care about this
+   file_out.write('\xef\xbb\xbf')
    file_out.write('[Script Info]\r\n')
    file_out.write('ScriptType: v4.00+\r\n')
    file_out.write('[V4+ Styles]\r\n')
