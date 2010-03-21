@@ -638,12 +638,11 @@ def arg2vidset(s, fallback=True):
    import logging
    log = logging.getLogger('arg2vidset').log
    res = (
-      re.compile('http://www.youtube(?:-nocookie)?\.[^/]+/watch?.*v=(?P<vid>[^&#]+)'),
-      re.compile('http://www.youtube(?:-nocookie)?\.[^/]+/v/(?P<vid>[^&#]+)')
+      re.compile('(?P<vid>[A-Za-z0-9_-]{11})'),
+      re.compile('http://www.youtube(?:-nocookie)?\.[^/]+/watch?.*v=(?P<vid>[A-Za-z0-9_-]{11})($|[^A-Za-z0-9_-])'),
+      re.compile('http://www.youtube(?:-nocookie)?\.[^/]+/v/(?P<vid>[A-Za-z0-9_-]{11})($|[^A-Za-z0-9_-])')
    )
    
-   if (len(s) == 11):
-      return [s]
    for rx in res:
       m = rx.search(s)
       if (m is None):
