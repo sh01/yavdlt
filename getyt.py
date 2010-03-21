@@ -221,9 +221,16 @@ class YTimedTextEntry:
       dom = xml.dom.minidom.parseString(content)
       rv = []
       for node in dom.getElementsByTagName('text'):
+         try:
+            dur = float(node.attributes['dur'].value)
+         except KeyError:
+            # This is very rare, and I have no idea what the actual meaning
+            # of this construct is. Defaulting to 0 until we get a better
+            # understanding of this case.
+            dur = 0.0
          rv.append(cls(
             float(node.attributes['start'].value),
-            float(node.attributes['dur'].value),
+            dur,
             xml_unescape(node.firstChild.nodeValue)
          ))
       return tuple(rv)
@@ -244,7 +251,7 @@ class YTimedTextEntry:
       return u'Dialogue: 0,%s,%s,Default,,0000,0000,0000,,%s' % (
          _second2ssa_ts(self.ts_start),
          _second2ssa_ts(self.ts_start+self.dur),
-         self.text
+         self.text.replace('\n', '\\N')
       )
 
 class YTError(StandardError):
