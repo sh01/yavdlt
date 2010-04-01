@@ -262,10 +262,11 @@ class YTDefaultFmt:
       return 'default'
 
 class YTVideoRef:
-   re_tok = re.compile('"t": "(?P<field_t>[^"]*)"')
-   re_title = re.compile('<h1[^>]*>(?P<text>[^<]*)</h1[^>]*>')
+   re_tok = re.compile('&t=(?P<field_t>[^"&]+)&')
+   re_title = re.compile('<meta name="title" content="(?P<text>.*?)">')
    re_err = re.compile('<div[^>]* class="yt-alert-content"[^>]*>(?P<text>[^<]+)</div>')
-   re_fmt_url_map = re.compile('"fmt_url_map": *"(?P<ums>[^"]+)"')
+   re_fmt_url_map_markup = re.compile(r'\? "(?P<umm>.*?fmt_url_map=.*?>)"')
+   re_fmt_url_map = re.compile('fmt_url_map=*(?P<ums>[^"&]+)&')
    
    FMT_DEFAULT = YTDefaultFmt()
    URL_FMT_WATCH = 'http://www.youtube.com/watch?v=%s&fmt=%s'
@@ -392,6 +393,7 @@ class YTVideoRef:
       
       m = self.re_title.search(content)
       if (m is None):
+         self.log(30, 'Unable to extract video title; this probably indicates a yt_getter bug.')
          self.title = '--untitled--'
       else:
          self.title = m.groupdict()['text']
@@ -524,10 +526,16 @@ class YTVideoRef:
    def fmt_url_map_update_markup(self, markup):
       from urllib import unquote
       
-      m = self.re_fmt_url_map.search(markup)
+      m = self.re_fmt_url_map_markup.search(markup)
       if (m is None):
+        return
+      umm = m.groupdict()['umm']
+      umm_unescaped = umm.decode('string_escape')
+      m2 = self.re_fmt_url_map.search(umm_unescaped)
+      
+      if (m2 is None):
          return
-      ums_raw = m.groupdict()['ums']
+      ums_raw = m2.groupdict()['ums']
       ums = unquote(ums_raw)
       self.fmt_url_map_update(ums)
    
@@ -571,15 +579,15 @@ class YTVideoRef:
          return None
    
    def get_video_url(self, fmt):
-      if (self.tok is None):
-         raise ValueError('Need to get token first.')
-      
       if (self.force_fmt_url_map_use and (not (fmt in self.fmt_url_map))):
          self.fmt_url_map_fetch_update(fmt)
       
       if (fmt in self.fmt_url_map):
          self.log(20, 'Using cached direct video url.')
          return self.fmt_url_map[fmt]
+      
+      if (self.tok is None):
+         raise ValueError('Need to get token first.')
       
       if (fmt is self.FMT_DEFAULT):
          fmtstr = ''
