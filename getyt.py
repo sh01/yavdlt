@@ -318,15 +318,17 @@ class YTVideoRef:
       self.title = None
       self.maximize_quality = maximize_quality
    
-   def mangle_meta_url(self, url):
-      """This function will be called to preprocess YT metadata urls.
+   def mangle_yt_urls(self, url):
+      """This function will be called to preprocess YT urls.
       
       The default implementation simply returns its first argument.
       
-      Since YT implements region restrictions by checking the client IP on
-      metadata (i.e. watch or getvideoinfo) requests, we can avoid being
-      affected by those by using various http application-layer gateways for
-      those urls only.
+      YT used to implement region restrictions by checking the client IP on
+      metadata (i.e. watch or getvideoinfo) requests only, but has since
+      expanded to doing the same on the actual download urls.
+      
+      Hence, region restrictions can only be avoided by passing all requests
+      to YT through an http gateway.
       
       If you want to do that, override or overwrite this method and do your URL
       mangling here."""
@@ -347,7 +349,7 @@ class YTVideoRef:
       from urllib import splitvalue, unquote, unquote_plus
       
       url = self.URL_FMT_GETVIDEOINFO % (self.vid,)
-      url = self.mangle_meta_url(url)
+      url = self.mangle_yt_urls(url)
       content = urllib2.urlopen(url).read()
       def uqv((key, val)):
          return (key, unquote_plus(val))
@@ -376,7 +378,7 @@ class YTVideoRef:
          fmt = ''
       
       url = self.URL_FMT_WATCH % (self.vid, fmt)
-      url = self.mangle_meta_url(url)
+      url = self.mangle_yt_urls(url)
       
       content = urllib2.urlopen(url).read()
       
@@ -508,7 +510,7 @@ class YTVideoRef:
    
    def fmt_url_map_fetch_update(self, fmt):
       url = self.URL_FMT_WATCH % (self.vid, fmt)
-      url = self.mangle_meta_url(url)
+      url = self.mangle_yt_urls(url)
       content = urllib2.urlopen(url).read()
       self.fmt_url_map_update_markup(content)
    
@@ -752,11 +754,11 @@ def main():
    op.add_option('--fmt', default=None, help="YT format number to use.")
    op.add_option('--hd', default=False, action='store_true', help='Optimize for quality; get highest-resolution files available.')
    op.add_option('--playlist', default=None, help='Parse (additional) video ids from specified playlist', metavar='PLAYLIST_ID')
-   op.add_option('--list-meta-gateways', dest='list_meta_gateways', default=False, action='store_true', help='Print lists of known http gateways and exit')
-   op.add_option('--meta-gateway', dest='meta_gateway', default=None, metavar='SERVICENAME', help='Fetch metadata pages through specified HTTP gateway')
+   op.add_option('--list-http-gateways', dest='list_http_gateways', default=False, action='store_true', help='Print lists of known http gateways and exit')
+   op.add_option('--http-gateway', dest='http_gateway', default=None, metavar='SERVICENAME', help='Fetch metadata pages through specified HTTP gateway')
    
    (opts, args) = op.parse_args()
-   if (opts.list_meta_gateways):
+   if (opts.list_http_gateways):
       print(sorted(list(url_mappers.keys())))
       return
    
@@ -773,14 +775,14 @@ def main():
    vids_set = set()
    vids = []
    
-   if not (opts.meta_gateway is None):
+   if not (opts.http_gateway is None):
       try:
-         mgw = url_mappers[opts.meta_gateway]
+         hgw = url_mappers[opts.http_gateway]
       except KeyError:
-         print('Unknown http gateway %r.' % opts.meta_gateway)
+         print('Unknown http gateway %r.' % opts.http_gateway)
          return
    else:
-      mgw = None
+      hgw = None
    
    def update_vids(s):
       for vid in s:
@@ -804,8 +806,8 @@ def main():
       log(20, 'Fetching data for video with id %r.' % (vid,))
       ref = YTVideoRef(vid, fmt, maximize_quality=opts.hd)
       
-      if not (mgw is None):
-         ref.mangle_meta_url = mgw
+      if not (hgw is None):
+         ref.mangle_yt_urls = hgw
          ref.force_fmt_url_map_use = True
       
       try:
