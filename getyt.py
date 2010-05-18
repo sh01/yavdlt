@@ -263,7 +263,7 @@ class YTDefaultFmt:
 
 class YTVideoRef:
    re_tok = re.compile('&t=(?P<field_t>[^"&]+)&')
-   re_title = re.compile('<meta name="title" content="(?P<text>.*?)">')
+   re_title = re.compile('<link rel="alternate" +type="application/json\+oembed" +href="[^"]*" +title="(?P<text>.*?)" */>')
    re_err = re.compile('<div[^>]* class="yt-alert-content"[^>]*>(?P<text>[^<]+)</div>')
    re_fmt_url_map_markup = re.compile(r'\? "(?P<umm>.*?fmt_url_map=.*?>)"')
    re_fmt_url_map = re.compile('fmt_url_map=*(?P<ums>[^"&]+)&')
@@ -586,7 +586,7 @@ class YTVideoRef:
       
       if (fmt in self.fmt_url_map):
          self.log(20, 'Using cached direct video url.')
-         return self.fmt_url_map[fmt]
+         return self.mangle_yt_urls(self.fmt_url_map[fmt])
       
       if (self.tok is None):
          raise ValueError('Need to get token first.')
@@ -596,7 +596,7 @@ class YTVideoRef:
       else:
          fmtstr = '&fmt=%d' % (fmt,)
       
-      rv = self.URL_FMT_GETVIDEO % (self.vid, self.tok, fmtstr)
+      rv = self.mangle_yt_urls(self.URL_FMT_GETVIDEO % (self.vid, self.tok, fmtstr))
       return rv
 
 
@@ -710,20 +710,22 @@ def url_mapper_reg(key):
       return val
    return r
 
-@url_mapper_reg('sixxs')
-def url_mangle_sixxs_46gw(url):
-   from urllib import splithost, splittype
-   (utype, urest) = splittype(url)
-   (uhost, upath) = splithost(urest)
-   uhost += '.sixxs.org'
-   rv = '%s://%s%s' % (utype, uhost, upath)
-   return rv
+# Commented out for the moment, since it's broken for (most?) video downloads
+# due to using a sotre-and-forward mechanism.
+#@url_mapper_reg('sixxs')
+#def url_mangle_sixxs_46gw(url):
+   #from urllib import splithost, splittype
+   #(utype, urest) = splittype(url)
+   #(uhost, upath) = splithost(urest)
+   #uhost += '.sixxs.org'
+   #rv = '%s://%s%s' % (utype, uhost, upath)
+   #return rv
 
 def make_urlmangler_phpproxy_base64(name, baseurl):
    @url_mapper_reg(name)
    def url_mangle(url):
       import base64
-      return ''.join((baseurl, '/index.php?q=', base64.encodestring(url)))
+      return ''.join((baseurl, '/index.php?q=', base64.encodestring(url).replace('\n','')))
    return url_mangle
 
 
