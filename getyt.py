@@ -766,7 +766,7 @@ def main():
       print(sorted(list(url_mappers.keys())))
       return
    
-   log(50, 'Init.')
+   log(20, 'Init.')
    
    fmt = opts.fmt
    if not (fmt is None):
@@ -838,7 +838,7 @@ def main():
    
    if (vids_failed):
       log(30, 'Failed to retrieve videos: %s' % (vids_failed,))
-   log(50, 'All done.')
+   log(20, 'All done.')
 
 if (__name__ == '__main__'):
    main()
