@@ -264,7 +264,7 @@ class YTDefaultFmt:
 class YTVideoRef:
    re_tok = re.compile('&t=(?P<field_t>[^"&]+)&')
    re_title = re.compile('<link rel="alternate" +type="application/json\+oembed" +href="[^"]*" +title="(?P<text>.*?)" */>')
-   re_err = re.compile('<div[^>]* class="yt-alert-content"[^>]*>(?P<text>[^<]+)</div>')
+   re_err = re.compile('<div[^>]* class="yt-alert-content"[^>]*>(?P<text>.*?)</div>', re.DOTALL)
    re_fmt_url_map_markup = re.compile(r'\? "(?P<umm>.*?fmt_url_map=.*?>)"')
    re_fmt_url_map = re.compile('fmt_url_map=*(?P<ums>[^"&]+)&')
    
@@ -388,7 +388,9 @@ class YTVideoRef:
          if (m_err is None):
             raise StandardError("YT markup failed to match expectations; can't extract video token.")
          
-         err_text = xml_unescape(m_err.groupdict()['text'].strip())
+         err_text = m_err.groupdict()['text'].strip()
+         err_text = err_text.replace('<br/>', '')
+         err_text = xml_unescape(err_text)
          raise YTError('YT refuses to deliver token: %r' % (err_text,))
         
       tok = m.groupdict()['field_t']
