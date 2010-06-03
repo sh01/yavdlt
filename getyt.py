@@ -760,11 +760,14 @@ def main():
    op.add_option('--playlist', default=None, help='Parse (additional) video ids from specified playlist', metavar='PLAYLIST_ID')
    op.add_option('--list-http-gateways', dest='list_http_gateways', default=False, action='store_true', help='Print lists of known http gateways and exit')
    op.add_option('--http-gateway', dest='http_gateway', default=None, metavar='SERVICENAME', help='Fetch metadata pages through specified HTTP gateway')
+   op.add_option('-q', '--quiet', dest='loglevel', default=15, action='store_const', const=30, help='Limit output to errors.')
    
    (opts, args) = op.parse_args()
    if (opts.list_http_gateways):
       print(sorted(list(url_mappers.keys())))
       return
+   
+   logger.setLevel(opts.loglevel)
    
    log(20, 'Init.')
    
