@@ -257,6 +257,9 @@ class YTimedTextEntry:
 class YTError(StandardError):
    pass
 
+class YTLoginRequired(YTError):
+   pass
+
 class YTDefaultFmt:
    def __str__(self):
       return 'default'
@@ -265,6 +268,7 @@ class YTVideoRef:
    re_tok = re.compile('&t=(?P<field_t>[^"&]+)&')
    re_title = re.compile('<link rel="alternate" +type="application/json\+oembed" +href="[^"]*" +title="(?P<text>.*?)" */>')
    re_err = re.compile('<div[^>]* class="yt-alert-content"[^>]*>(?P<text>.*?)</div>', re.DOTALL)
+   re_err_age = re.compile('<div id="verify-age-details">(?P<text>.*?)</div>', re.DOTALL)
    re_fmt_url_map_markup = re.compile(r'\? "(?P<umm>.*?fmt_url_map=.*?>)"')
    re_fmt_url_map = re.compile('fmt_url_map=*(?P<ums>[^"&]+)&')
    
@@ -354,6 +358,7 @@ class YTVideoRef:
       def uqv((key, val)):
          return (key, unquote_plus(val))
       
+      print(content.split('&'))
       vi = dict(uqv(splitvalue(cfrag)) for cfrag in content.split('&'))
       
       if (vi['status'] != 'ok'):
@@ -386,12 +391,17 @@ class YTVideoRef:
       if (m is None):
          m_err = self.re_err.search(content)
          if (m_err is None):
-            raise StandardError("YT markup failed to match expectations; can't extract video token.")
+            m_err = self.re_err_age.search(content)
+            if (m_err is None):
+               raise StandardError("YT markup failed to match expectations; can't extract video token.")
+            error_cls = YTLoginRequired
+         else:
+            error_cls = YTError
          
          err_text = m_err.groupdict()['text'].strip()
-         err_text = err_text.replace('<br/>', '')
-         err_text = xml_unescape(err_text)
-         raise YTError('YT refuses to deliver token: %r' % (err_text,))
+         #err_text = err_text.replace('<br/>', '')
+         #err_text = xml_unescape(err_text)
+         raise error_cls('YT refuses to deliver token: %r' % (err_text,))
         
       tok = m.groupdict()['field_t']
       
