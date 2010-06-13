@@ -358,7 +358,6 @@ class YTVideoRef:
       def uqv((key, val)):
          return (key, unquote_plus(val))
       
-      print(content.split('&'))
       vi = dict(uqv(splitvalue(cfrag)) for cfrag in content.split('&'))
       
       if (vi['status'] != 'ok'):
