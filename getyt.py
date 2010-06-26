@@ -195,6 +195,8 @@ class YTimedTextList:
       return cls(vid, tuple(tdata))
    
    def get_url(self, name, lc):
+      if (isinstance(name, unicode)):
+         name = name.encode('utf-8')
       return 'http://video.google.com/timedtext?hl=en&v=%s&type=track&name=%s&lang=%s' % (self.vid, urllib.quote(name), urllib.quote(lc))
    
    def fetch_all_blocking(self):
@@ -515,6 +517,8 @@ class YTVideoRef:
          name = name.replace('/', '').replace('\x00','')
          fn = self.choose_fn('%s_%s.ssa' % (lc, name))
          self.log(20, 'Writing timedtext data for name %r, lc %r to %r.' % (name, lc, fn))
+         if (isinstance(fn, unicode)):
+            fn = fn.encode('utf-8')
          f = file(fn, 'wb')
          dump_ytannos_ssa(ttel, f)
          f.close()
