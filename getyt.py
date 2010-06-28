@@ -223,6 +223,11 @@ class YTimedTextEntry:
       dom = xml.dom.minidom.parseString(content)
       rv = []
       for node in dom.getElementsByTagName('text'):
+         if (node.firstChild is None):
+            text = ''
+         else:
+            text = xml_unescape(node.firstChild.nodeValue)
+         
          try:
             dur = float(node.attributes['dur'].value)
          except KeyError:
@@ -233,7 +238,7 @@ class YTimedTextEntry:
          rv.append(cls(
             float(node.attributes['start'].value),
             dur,
-            xml_unescape(node.firstChild.nodeValue)
+            text
          ))
       return tuple(rv)
    
