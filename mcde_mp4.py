@@ -32,6 +32,9 @@ def movts2unixtime(mov_ts):
 class MovParserError(Exception):
    pass
 
+class BoxBoundaryOverrun(MovParserError):
+   pass
+
 class MovBoxType:
    pass
 
@@ -151,6 +154,9 @@ class MovBox:
          off += atom.size
          f.seek(off)
       
+      if (off > off_limit):
+         raise BoxBoundaryOverrun()
+      
       return rv
 
 def _mov_box_type_reg(cls):
@@ -174,6 +180,46 @@ class MovFullBox(MovBox):
          return self.bfmt
       return rv
 
+class MovBoxBranch(MovBox):
+   def _get_subel_off(self):
+      return (self.offset + self.hlen)
+   
+   def _init2(self):
+      super()._init2()
+      self.f.seek(self._get_subel_off())
+      try:
+         self.sub = MovBox.build_seq_from_file(self.f, self.offset + self.size)
+      except MovParserError as exc:
+         self.sub = None
+         raise MovParserError('Error parsing subelements of {0}.'.format(self)) from exc
+
+   def find_subbox(self, btype):
+      """Find a direct subbox of specified boxtype."""
+      btype = _make_mbt(btype)
+      
+      for box in self.sub:
+         if (box.type == btype):
+            return box
+      raise ValueError('No subboxes of type {0}.'.format(btype))
+   
+   def find_subboxes(self, btype):
+      """Return sequence of all direct subboxes of specified boxtype."""
+      btype = _make_mbt(btype)
+      rv = []
+      for box in self.sub:
+         if (box.type != btype):
+            continue
+         rv.append(box)
+      return rv
+   
+   def __repr__(self):
+      return '<{0} ({1}, {2}, {3}) sub: {4}>'.format(type(self), self.f, self.offset,
+         self.size, self.sub)
+      
+class MovFullBoxBranch(MovBoxBranch, MovFullBox):
+   pass
+
+
 @_mov_box_type_reg
 class MovBoxMovieHeader(MovFullBox):
    type = _make_mbt('mvhd')
@@ -189,8 +235,6 @@ class MovBoxMovieHeader(MovFullBox):
       
       self.ts_creat = movts2unixtime(ts_creat)
       self.ts_mod = movts2unixtime(ts_mod)
-      
-      print(self.__dict__)
 
 
 class MovBoxSampledataBase(MovFullBox):
@@ -223,21 +267,23 @@ class MovBoxSampleTableBase(MovBoxSampledataBase):
       
       self.entry_data = entry_data
 
+
+class MovSampleEntry(MovBox):
+   bfmt_entry = '>'
+   def _init2(self):
+      pass
+      
 @_mov_box_type_reg
-class MovBoxSampleDescription(MovBoxSampledataBase):
+class MovBoxSampleDescription(MovFullBoxBranch):
    type = _make_mbt('stsd')
-   bfmt_entry = '>LL6xH'
-   bfmt_entry_len = struct.calcsize(bfmt_entry)
+   bfmt = '>L'
+   bfmt_len = struct.calcsize(bfmt)
+   def _get_subel_off(self):
+      return (super()._get_subel_off() + self.bfmt_len)
+   
    def _init2(self):
       super()._init2()
-      off = self.bfmt_len
-      data = memoryview(self.get_body())
-      
-      entry_data = []
-      for i in range(self._elnum):
-         (sz, dfmt, dri) = struct.unpack(self.bfmt_entry, data[off:off+self.bfmt_entry_len])
-         entry_data.append((dfmt, dri))
-      self.entry_data = entry_data
+      (elcount,) = struct.unpack(self.bfmt, self.get_body()[:self.bfmt_len])
 
 @_mov_box_type_reg
 class MovBoxTTS(MovBoxSampleTableBase):
@@ -306,39 +352,6 @@ class MovBoxChunkOffset32(MovBoxChunkOffset):
 class MovBoxChunkOffset64(MovBoxChunkOffset):
    type = _make_mbt('co64')
    bfmt_entry = '>Q'
-
-
-class MovBoxBranch(MovBox):
-   def _init2(self):
-      super()._init2()
-      self.sub = MovBox.build_seq_from_file(self.f, self.offset + self.size)
-
-   def find_subbox(self, btype):
-      """Find a direct subbox of specified boxtype."""
-      btype = _make_mbt(btype)
-      
-      for box in self.sub:
-         if (box.type == btype):
-            return box
-      raise ValueError('No subboxes of type {0}.'.format(btype))
-   
-   def find_subboxes(self, btype):
-      """Return sequence of all direct subboxes of specified boxtype."""
-      btype = _make_mbt(btype)
-      rv = []
-      for box in self.sub:
-         if (box.type != btype):
-            continue
-         rv.append(box)
-      return rv
-   
-   def __repr__(self):
-      return '<{0} ({1}, {2}, {3}) sub: {4}>'.format(type(self), self.f, self.offset,
-         self.size, self.sub)
-      
-
-class MovFullBoxBranch(MovFullBox, MovBoxBranch):
-   pass
 
 @_mov_box_type_reg
 class MovBoxMovie(MovBoxBranch):
@@ -410,7 +423,7 @@ class MovBoxMeta(MovFullBoxBranch):
    type = _make_mbt(b'meta')
 
 @_mov_box_type_reg
-class MovBoxHandlerReference(MovFullBoxBranch):
+class MovBoxHandlerReference(MovFullBox):
    type = _make_mbt(b'hdlr')
    bfmt = '>LL12x'
    bfmt_len = struct.calcsize(bfmt)
