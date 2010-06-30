@@ -68,16 +68,22 @@ def _make_mbt(x):
       return MovBoxTypeInt(x)
    return MovBoxTypeUUID(x)
 
+class MovContext:
+   """Aggregate type for external objects (backing fds) and mov parser state."""
+   def __init__(self, f):
+      self.f = f
+      self._track_type = None
+
 class MovBox:
    cls_map = {}
    
-   def __init__(self, f, offset, size, hlen, btype):
-      self.f = f
+   def __init__(self, ctx, offset, size, hlen, btype):
+      self.c = ctx
       self.hlen = hlen
       self.offset = offset
       self.size = size
       self.type = btype
-      self.f.seek(self.offset + self.hlen)
+      self.c.f.seek(self.offset + self.hlen)
       self._init2()
 
    def _init2(self):
@@ -85,15 +91,15 @@ class MovBox:
 
    def get_body(self):
       """Return raw body data of this box."""
-      self.f.seek(self.offset + self.hlen)
+      self.c.f.seek(self.offset + self.hlen)
       bodylen = self.size - self.hlen
-      data = self.f.read(bodylen)
+      data = self.c.f.read(bodylen)
       if (len(data) != bodylen):
          raise StandardError()
       return data
 
    def __repr__(self):
-      return '{0}({1}, {2}, {3}, {4}({5}))'.format(type(self), self.f, self.offset,
+      return '{0}({1}, {2}, {3}, {4}({5}))'.format(type(self), self.c.f, self.offset,
          self.size, self.type, struct.pack('>L', self.type))
 
    def __format__(self, s):
@@ -108,16 +114,17 @@ class MovBox:
       return '<{0}{1}>'.format(type(self).__name__, tstr)
 
    @classmethod
-   def build(cls, f, offset, size, hlen, btype):
+   def build(cls, ctx, offset, size, hlen, btype):
       try:
          cls = cls.cls_map[btype]
       except KeyError:
          pass
       
-      return cls(f, offset, size, hlen, btype)
+      return cls(ctx, offset, size, hlen, btype)
 
    @classmethod
-   def build_from_file(cls, f):
+   def build_from_ctx(cls, ctx):
+      f = ctx.f
       off_start = f.seek(0,1)
       header = f.read(8)
       (size, btype) = struct.unpack('>LL', header)
@@ -137,10 +144,11 @@ class MovBox:
          btype = MovBoxTypeUUID(f.read(16))
          hlen += 16
       
-      return cls.build(f, off_start, size, hlen, btype)
+      return cls.build(ctx, off_start, size, hlen, btype)
    
    @classmethod
-   def build_seq_from_file(cls, f, off_limit=None):
+   def build_seq_from_ctx(cls, ctx, off_limit=None):
+      f = ctx.f
       rv = []
       off = f.seek(0,1)
       if (off_limit is None):
@@ -149,7 +157,7 @@ class MovBox:
       f.seek(off)
       while ((off < off_limit) and (len(f.read(8)) == 8)):
          f.seek(off)
-         atom = cls.build_from_file(f)
+         atom = cls.build_from_ctx(ctx)
          rv.append(atom)
          off += atom.size
          f.seek(off)
@@ -158,6 +166,11 @@ class MovBox:
          raise BoxBoundaryOverrun()
       
       return rv
+   
+   @classmethod
+   def build_seq_from_file(cls, f, *args, **kwargs):
+      ctx = MovContext(f)
+      return cls.build_seq_from_ctx(ctx)
 
 def _mov_box_type_reg(cls):
    MovBox.cls_map[cls.type] = cls
@@ -166,8 +179,8 @@ def _mov_box_type_reg(cls):
 class MovFullBox(MovBox):
    def _init2(self):
       super()._init2()
-      self.f.seek(self.offset + self.hlen)
-      data = self.f.read(4)
+      self.c.f.seek(self.offset + self.hlen)
+      data = self.c.f.read(4)
       (self.version, self.flags) = struct.unpack('>B3s', data)
       self.hlen += 4
    
@@ -181,14 +194,16 @@ class MovFullBox(MovBox):
       return rv
 
 class MovBoxBranch(MovBox):
+   sub_cls_default = MovBox
+   
    def _get_subel_off(self):
       return (self.offset + self.hlen)
    
    def _init2(self):
       super()._init2()
-      self.f.seek(self._get_subel_off())
+      self.c.f.seek(self._get_subel_off())
       try:
-         self.sub = MovBox.build_seq_from_file(self.f, self.offset + self.size)
+         self.sub = self.sub_cls_default.build_seq_from_ctx(self.c, self.offset + self.size)
       except MovParserError as exc:
          self.sub = None
          raise MovParserError('Error parsing subelements of {0}.'.format(self)) from exc
@@ -213,7 +228,7 @@ class MovBoxBranch(MovBox):
       return rv
    
    def __repr__(self):
-      return '<{0} ({1}, {2}, {3}) sub: {4}>'.format(type(self), self.f, self.offset,
+      return '<{0} ({1}, {2}, {3}) sub: {4}>'.format(type(self), self.c.f, self.offset,
          self.size, self.sub)
       
 class MovFullBoxBranch(MovBoxBranch, MovFullBox):
@@ -269,21 +284,82 @@ class MovBoxSampleTableBase(MovBoxSampledataBase):
 
 
 class MovSampleEntry(MovBox):
-   bfmt_entry = '>'
+   bfmt = '>6xH'
+   bfmt_len = struct.calcsize(bfmt)
    def _init2(self):
-      pass
-      
+      super()._init2()
+      (self.dri,) = struct.unpack(self.bfmt, self.get_body()[:self.bfmt_len])
+      self.hlen += self.bfmt_len
+   
+   def __format__(self, fs):
+      if (fs != 'f'):
+         return super().__format__(fs)
+      return '<{0} type: {1} dri: {2}>'.format(type(self).__name__, self.type, self.dri)
+
+   
 @_mov_box_type_reg
 class MovBoxSampleDescription(MovFullBoxBranch):
    type = _make_mbt('stsd')
+   sub_cls_map = {
+   }
+   
    bfmt = '>L'
    bfmt_len = struct.calcsize(bfmt)
    def _get_subel_off(self):
       return (super()._get_subel_off() + self.bfmt_len)
    
    def _init2(self):
+      if (self.c._track_type is None):
+         raise ParserError('No track type information available.')
+      try:
+         self.sub_cls_default = self.sub_cls_map[self.c._track_type]
+      except KeyError:
+         self.sub_cls_default = MovSampleEntry
+      
       super()._init2()
       (elcount,) = struct.unpack(self.bfmt, self.get_body()[:self.bfmt_len])
+      if (len(self.sub) != elcount):
+         raise MovParserError()
+
+def _mov_sample_entry_type_reg(cls):
+   MovBoxSampleDescription.sub_cls_map[cls.track_type] = cls
+   return cls
+
+@_mov_sample_entry_type_reg
+class MovSampleEntryVideo(MovSampleEntry):
+   track_type = _make_mbt(b'vide')
+   bfmt2 = '>16xHHLL4xHB31sH2x'
+   bfmt2_len = struct.calcsize(bfmt2)
+   def _init2(self):
+      super()._init2()
+      (self.width, self.height, self.res_h, self.res_v, self.frame_count, cname_len, cname, self.depth
+      ) = struct.unpack(self.bfmt2, self.get_body()[:self.bfmt2_len])
+      
+      if (cname_len > 31):
+         raise ParserError('Invalid compressor name length {0}.'.format(cname_len))
+      cname = cname[:cname_len]
+      self.cname = cname
+   
+   def __format__(self, s):
+      if (s != 'f'):
+         return super().__format__(s)
+      return '<{0} type: {1} dri: {2} cname: {3} dim: {4}x{5} depth: {6}>'.format(type(self).__name__, self.type, self.dri,
+         self.cname, self.width, self.height, self.depth)
+
+@_mov_sample_entry_type_reg
+class MovSampleEntrySound(MovSampleEntry):
+   track_type = _make_mbt(b'soun')
+   bfmt2 = '>8xHH4xL'
+   bfmt2_len = struct.calcsize(bfmt2)
+   def _init2(self):
+      super()._init2()
+      (self.channel_count, self.sample_size, self.sample_rate) = struct.unpack(self.bfmt2, self.get_body()[:self.bfmt2_len])
+   
+   def __format__(self, s):
+      if (s != 'f'):
+         return super().__format__(s)
+      return '<{0} type: {1} dri: {2} channels: {3} sample size: {4} sample rate: {5}>'.format(type(self).__name__, self.type,
+         self.dri, self.channel_count, self.sample_size, self.sample_rate)
 
 @_mov_box_type_reg
 class MovBoxTTS(MovBoxSampleTableBase):
@@ -377,8 +453,8 @@ class MovBoxTrack(MovBoxBranch):
    
    def dump_media_data(self, out):
       for (off, sz) in self.get_media_data_offsets():
-         self.f.seek(off)
-         block = self.f.read(sz)
+         self.c.f.seek(off)
+         block = self.c.f.read(sz)
          if (len(block) != sz):
             raise MovParserError('Unable to read {0} bytes from offset {1} from {2}.'.format(sz, off, self.f))
          out(block)
@@ -417,6 +493,10 @@ class MovBoxTrack(MovBoxBranch):
 @_mov_box_type_reg
 class MovBoxMedia(MovBoxBranch):
    type = _make_mbt(b'mdia')
+   def _init2(self):
+      self.c._track_type = None
+      super()._init2()
+      self.c._track_type = None
 
 @_mov_box_type_reg
 class MovBoxMeta(MovFullBoxBranch):
@@ -438,6 +518,7 @@ class MovBoxHandlerReference(MovFullBox):
          pass
       
       self.name = name
+      self.c._track_type = self.handler_type
    
    def __format__(self, s):
       if (s != 'f'):
@@ -457,8 +538,8 @@ class MovBoxDataInformation(MovBoxBranch):
 class MovBoxDataReference(MovBoxBranch):
    type = _make_mbt(b'dref')
    def _init2(self):
-      self.f.seek(self.offset + self.hlen + 4 + 4)
-      self.sub = MovBox.build_seq_from_file(self.f, self.offset + self.size)
+      self.c.f.seek(self.offset + self.hlen + 4 + 4)
+      self.sub = MovBox.build_seq_from_ctx(self.c, self.offset + self.size)
 
 @_mov_box_type_reg
 class MovBoxSampleTable(MovBoxBranch):
