@@ -106,6 +106,13 @@ class MovBox:
       if (s != 'f'):
          return repr(self)
       
+      try:
+         formatter = self._format_f
+      except AttributeError:
+         pass
+      else:
+         return formatter(s)
+      
       if (type(self) == MovBox):
          tstr = '({0})'.format(self.type)
       else:
@@ -291,9 +298,7 @@ class MovSampleEntry(MovBox):
       (self.dri,) = struct.unpack(self.bfmt, self.get_body()[:self.bfmt_len])
       self.hlen += self.bfmt_len
    
-   def __format__(self, fs):
-      if (fs != 'f'):
-         return super().__format__(fs)
+   def _format_f(self, fs):
       return '<{0} type: {1} dri: {2}>'.format(type(self).__name__, self.type, self.dri)
 
    
@@ -340,9 +345,7 @@ class MovSampleEntryVideo(MovSampleEntry):
       cname = cname[:cname_len]
       self.cname = cname
    
-   def __format__(self, s):
-      if (s != 'f'):
-         return super().__format__(s)
+   def _format_f(self, fs):
       return '<{0} type: {1} dri: {2} cname: {3} dim: {4}x{5} depth: {6}>'.format(type(self).__name__, self.type, self.dri,
          self.cname, self.width, self.height, self.depth)
 
@@ -355,9 +358,7 @@ class MovSampleEntrySound(MovSampleEntry):
       super()._init2()
       (self.channel_count, self.sample_size, self.sample_rate) = struct.unpack(self.bfmt2, self.get_body()[:self.bfmt2_len])
    
-   def __format__(self, s):
-      if (s != 'f'):
-         return super().__format__(s)
+   def _format_f(self, fs):
       return '<{0} type: {1} dri: {2} channels: {3} sample size: {4} sample rate: {5}>'.format(type(self).__name__, self.type,
          self.dri, self.channel_count, self.sample_size, self.sample_rate)
 
@@ -558,9 +559,7 @@ class MovBoxHandlerReference(MovFullBox):
       self.name = name
       self.c._track_type = self.handler_type
    
-   def __format__(self, s):
-      if (s != 'f'):
-         return super().__format__(s)
+   def _format_f(self, fs):
       return '<{0} {1} {2}>'.format(type(self).__name__, MovBoxTypeInt(self.handler_type), self.name)
          
 
@@ -599,9 +598,7 @@ class MovBoxTrackHeader(MovFullBox):
       self.ts_creat = movts2unixtime(ts_creat)
       self.ts_mod = movts2unixtime(ts_mod)
    
-   def __format__(self, fs):
-      if (fs != 'f'):
-         return super().__format__(self)
+   def _format_f(self, fs):
       dt_mod = datetime.datetime.fromtimestamp(self.ts_mod)
       return '<{0} dur: {1} mod_ts: {2} width: {3} height: {4}>'.format(type(self).__name__, self.dur, dt_mod, self.width,
          self.height)
