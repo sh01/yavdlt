@@ -257,6 +257,12 @@ class MovBoxMovieHeader(MovFullBox):
       
       self.ts_creat = movts2unixtime(ts_creat)
       self.ts_mod = movts2unixtime(ts_mod)
+   
+   def _format_f(self, s):
+      dt_creat = datetime.datetime.fromtimestamp(self.ts_creat)
+      dt_mod = datetime.datetime.fromtimestamp(self.ts_mod)
+      return '<{0} type: {1} time_scale: {2} ts_creat: {3} ts_mod: {4}>'.format(type(self).__name__, self.type,
+         self.time_scale, dt_creat, dt_mod)
 
 
 class MovBoxSampledataBase(MovFullBox):
@@ -560,7 +566,7 @@ class MovBoxHandlerReference(MovFullBox):
       self.c._track_type = self.handler_type
    
    def _format_f(self, fs):
-      return '<{0} {1} {2}>'.format(type(self).__name__, MovBoxTypeInt(self.handler_type), self.name)
+      return '<{0} htype: {1} name: {2}>'.format(type(self).__name__, MovBoxTypeInt(self.handler_type), self.name)
          
 
 @_mov_box_type_reg
