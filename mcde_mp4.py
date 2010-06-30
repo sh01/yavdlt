@@ -272,7 +272,7 @@ class MovBoxSampleTableBase(MovBoxSampledataBase):
       bfmt_entry_len = struct.calcsize(self.bfmt_entry)
       onetuples = (len(self.bfmt_entry.lstrip('<>!')) == 1)
       
-      while (i < len(data)):
+      for j in range(self._elnum):
          entry_val = struct.unpack(self.bfmt_entry, data[i:i+bfmt_entry_len])
          if (onetuples):
             (entry_val,) = entry_val
@@ -443,34 +443,57 @@ class MovBoxTrack(MovBoxBranch):
    def _init2(self):
       super()._init2()
       stbl = self.find_subbox(b'mdia').find_subbox(b'minf').find_subbox(b'stbl')
+      self.stts = stbl.find_subbox(b'stts')
       self.stsd = stbl.find_subbox(b'stsd')
       self.stsc = stbl.find_subbox(b'stsc')
       self.stsz = stbl.find_subbox(b'stsz')
       try:
+         self.stss = stbl.find_subbox(b'stss')
+      except ValueError:
+         self.stss = None
+      try:
          self.stco = stbl.find_subbox(b'stco')
       except ValueError:
          self.stco = stbl.find_subbox(b'co64')
+      
+      try:
+         self.edts = self.find_subbox(b'edts')
+      except ValueError:
+         self.edts = None
    
    def dump_media_data(self, out):
-      for (off, sz) in self.get_media_data_offsets():
+      for (timeval, off, sz, sync) in self.get_sample_data():
          self.c.f.seek(off)
          block = self.c.f.read(sz)
          if (len(block) != sz):
             raise MovParserError('Unable to read {0} bytes from offset {1} from {2}.'.format(sz, off, self.f))
          out(block)
    
-   def get_media_data_offsets(self):
-      ss = self.stsz.entry_data
+   def get_sample_data(self):
+      if not (self.edts is None):
+         raise MovParserError('EDTS support is currently unimplemented.')
+      
+      sz = self.stsz.entry_data
       sc = self.stsc.entry_data_pp
       co = self.stco.entry_data
+      ts = self.stts.entry_data
+      if (self.stss is None):
+         ss = None
+      else:
+         ss = self.stss.entry_data
+         ss_i = 0
       
       s = 0
-      s_lim = len(ss)
+      s_lim = len(sz)
       s_sublim = 0
+      
       c = 0
       c_lim = 0
       cblock = 0
       
+      ts_i = 0
+      ts_lim = 0
+      timeval = 0
       while (s < s_lim):
          if (s >= s_sublim):
             while ((not (c_lim is None)) and (c >= c_lim)):
@@ -484,10 +507,25 @@ class MovBoxTrack(MovBoxBranch):
             s_off = co[c]
             c += 1
          
-         size = ss[s]
-         yield ((s_off, size))
+         if (ss is None):
+            is_sync = True
+         elif ((ss_i < len(ss)) and (s == ss[ss_i])):
+            is_sync = True
+            ss_i += 1
+         else:
+            is_sync = False
+         
+         while (s >= ts_lim):
+            (scount, timedelta) = ts[ts_i]
+            ts_lim += scount
+            ts_i += 1
+            
+         
+         size = sz[s]
+         yield ((timeval, s_off, size, is_sync))
          s_off += size
          s += 1
+         timeval += timedelta
       
 
 @_mov_box_type_reg
@@ -567,6 +605,10 @@ class MovBoxTrackHeader(MovFullBox):
       dt_mod = datetime.datetime.fromtimestamp(self.ts_mod)
       return '<{0} dur: {1} mod_ts: {2} width: {3} height: {4}>'.format(type(self).__name__, self.dur, dt_mod, self.width,
          self.height)
+
+@_mov_box_type_reg
+class MovBoxEditList(MovBoxBranch):
+   type = _make_mbt(b'edts')
 
 
 def _dump_atoms(seq, depth=0):
