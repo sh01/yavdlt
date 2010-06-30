@@ -165,21 +165,22 @@ class MovFullBox(MovBox):
       (self.version, self.flags) = struct.unpack('>B3s', data)
       self.hlen += 4
    
-
-@_mov_box_type_reg
-class MovBoxMovieHeader(MovFullBox):
-   type = _make_mbt('mvhd')
-   bfmts = {
-      0: '>5LH10x36s7L',
-      1: '>QQLQLH10x36s7L'
-   }
-   
    def _get_bfmt(self):
       try:
          rv = self.bfmts[self.version]
       except KeyError:
          raise MovParserError('Unable to parse ver {0!a}.'.format(self.version))
+      except AttributeError:
+         return self.bfmt
       return rv
+
+@_mov_box_type_reg
+class MovBoxMovieHeader(MovFullBox):
+   type = _make_mbt('mvhd')
+   bfmts = {
+      0: '>LLLLLH10x36s7L',
+      1: '>QQLQLH10x36s7L'
+   }
    
    def _init2(self):
       super()._init2()
@@ -449,6 +450,30 @@ class MovBoxDataReference(MovBoxBranch):
 @_mov_box_type_reg
 class MovBoxSampleTable(MovBoxBranch):
    type = _make_mbt(b'stbl')
+
+@_mov_box_type_reg
+class MovBoxTrackHeader(MovFullBox):
+   type = _make_mbt(b'tkhd')
+   bfmts = {
+      0: '>LLL4xL8xhhhxx36sLL',
+      1: '>QQL4xQ8xhhhxx36sLL'
+   }
+   
+   def _init2(self):
+      super()._init2()
+      (ts_creat, ts_mod, self.tid, self.dur, self.layer, self.altgroup, self.vol, self.mat, self.width, self.height
+      ) = struct.unpack(self._get_bfmt(), self.get_body())
+      
+      self.ts_creat = movts2unixtime(ts_creat)
+      self.ts_mod = movts2unixtime(ts_mod)
+   
+   def __format__(self, fs):
+      if (fs != 'f'):
+         return super().__format__(self)
+      dt_mod = datetime.datetime.fromtimestamp(self.ts_mod)
+      return '<{0} dur: {1} mod_ts: {2} width: {3} height: {4}>'.format(type(self).__name__, self.dur, dt_mod, self.width,
+         self.height)
+
 
 def _dump_atoms(seq, depth=0):
    for atom in seq:
