@@ -334,12 +334,12 @@ class YTVideoRef:
       
       The default implementation simply returns its first argument.
       
-      YT used to implement region restrictions by checking the client IP on
-      metadata (i.e. watch or getvideoinfo) requests only, but has since
-      expanded to doing the same on the actual download urls.
+      YT implements region restrictions by checking the client IP on metadata
+      (i.e. watch or getvideoinfo) requests, and locks the actual download URL
+      to a client IP (range; precise details currently unknown).
       
-      Hence, region restrictions can only be avoided by passing all requests
-      to YT through an http gateway.
+      Hence, the only known safe method to avoid region restrictions can only
+      is to pass all requests to YT through an http gateway.
       
       If you want to do that, override or overwrite this method and do your URL
       mangling here."""
