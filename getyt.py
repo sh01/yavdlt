@@ -277,7 +277,7 @@ class YTVideoRef:
    re_err = re.compile('<div[^>]* class="yt-alert-content"[^>]*>(?P<text>.*?)</div>', re.DOTALL)
    re_err_age = re.compile('<div id="verify-age-details">(?P<text>.*?)</div>', re.DOTALL)
    re_fmt_url_map_markup = re.compile(r'\? "(?P<umm>.*?fmt_url_map=.*?>)"')
-   re_fmt_url_map = re.compile('fmt_url_map=*(?P<ums>[^"&]+)&')
+   re_fmt_url_map = re.compile('fmt_url_map=(?P<ums>[^"&]+)&')
    
    FMT_DEFAULT = YTDefaultFmt()
    URL_FMT_WATCH = 'http://www.youtube.com/watch?v=%s&fmt=%s'
