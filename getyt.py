@@ -782,6 +782,7 @@ def main():
    
    (opts, args) = op.parse_args()
    if (opts.list_http_gateways):
+      print(list(url_mappers.keys()))
       return
    
    logger.setLevel(opts.loglevel)
