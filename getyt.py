@@ -460,7 +460,7 @@ class YTVideoRef:
       
       try:
          cl = int(req.headers.get('content-length'))
-      except (KeyError, ValueError):
+      except (KeyError, ValueError, TypeError):
          cl = None
       
       self.log(20, 'Total length is %d bytes.' % (cl,))
