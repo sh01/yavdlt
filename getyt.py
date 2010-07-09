@@ -751,7 +751,6 @@ def make_urlmangler_phpproxy_base64(name, baseurl):
 
 make_urlmangler_phpproxy_base64('ubsc', 'http://unblock-blocked-sites.com')
 make_urlmangler_phpproxy_base64('wpbc', 'http://webproxybrowser.com')
-make_urlmangler_phpproxy_base64('amc', 'http://anomani.com')
 
 def main():
    import optparse
