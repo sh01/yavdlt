@@ -319,7 +319,6 @@ class MovSampleEntry(MovBoxBranch):
    bfmt_len = struct.calcsize(bfmt)
    def _init2(self):
       self.hlen += self.bfmt_len
-      super()._init2()
       (self.dri,) = struct.unpack(self.bfmt, self.get_body()[:self.bfmt_len])
    
    def _format_f(self, fs):
@@ -360,6 +359,7 @@ class MovSampleEntryVideo(MovSampleEntry):
    bfmt2 = '>16xHHLL4xHB31sH2x'
    bfmt2_len = struct.calcsize(bfmt2)
    def _init2(self):
+      super()._init2()
       (self.width, self.height, self.res_h, self.res_v, self.frame_count, cname_len, cname, self.depth
       ) = struct.unpack(self.bfmt2, self.get_body()[:self.bfmt2_len])
       
@@ -368,7 +368,7 @@ class MovSampleEntryVideo(MovSampleEntry):
       cname = cname[:cname_len]
       self.cname = cname
       self.hlen += self.bfmt2_len
-      super()._init2()
+      MovBoxBranch._init2(self)
    
    def _format_f(self, fs):
       return '<{0} type: {1} dri: {2} cname: {3} dim: {4}x{5} depth: {6}>'.format(type(self).__name__, self.type, self.dri,
@@ -380,11 +380,11 @@ class MovSampleEntrySound(MovSampleEntry):
    bfmt2 = '>8xHH4xL'
    bfmt2_len = struct.calcsize(bfmt2)
    def _init2(self):
+      super()._init2()
       (self.channel_count, self.sample_size, self.sample_rate) = struct.unpack(self.bfmt2, self.get_body()[:self.bfmt2_len])
       self.sample_rate /= 65536
       self.hlen += self.bfmt2_len
-      super()._init2()
-      
+      MovBoxBranch._init2(self)
    
    def _format_f(self, fs):
       return '<{0} type: {1} dri: {2} channels: {3} sample size: {4} sample rate: {5}>'.format(type(self).__name__, self.type,
