@@ -233,6 +233,11 @@ class MatroskaElementMaster(MatroskaElement):
       bd_size = MatroskaVInt(sum(c.get_size() for c in self.sub))
       return (self.type.size + bd_size.size + bd_size)
 
+   def get_sub_by_cls(self, cls):
+      for e in self.sub:
+         if (isinstance(e, cls)):
+            return e
+
    @classmethod
    def _build_from_file(cls, etype, body_size, f):
       sub = MatroskaElement.build_seq_from_file(f, body_size)
@@ -487,6 +492,20 @@ class MatroskaElementTimeSlice(MatroskaElementMaster):
 @_mkv_type_reg
 class MatroskaElementTracks(MatroskaElementMaster):
    type = EBMLVInt(106212971)
+   def sort_tracks(self):
+      def _key(e):
+         return e.get_sub_by_cls(MatroskaElementTrackType).val
+      
+      self.sub.sort(key=_key)
+      rv = {}
+      for i in range(len(self.sub)):
+         t = self.sub[i]
+         id1 = t.get_sub_by_cls(MatroskaElementTrackNumber)
+         id2 = t.get_sub_by_cls(MatroskaElementTrackUID)
+         rv[id1.val] = MatroskaVInt(i + 1)
+         id1.val = id2.val = i + 1
+      return rv
+         
 
 @_mkv_type_reg
 class MatroskaElementTrackEntry(MatroskaElementMaster):
@@ -936,7 +955,16 @@ class MatroskaBuilder:
          flags = (is_keyframe << 7)
          sblock = MatroskaElementBlock_r.new_simple(track_num, tv_rel, flags, data_r)
          clust.sub.append(sblock)
-    
+   
+   def sort_tracks(self):
+      """Sort our tracks by type number, updating any block references."""
+      tn_map = self.tracks.sort_tracks()
+      for c in self.clusters:
+         for e in c.sub:
+            if isinstance(e, MatroskaElementBlock_r):
+               e.tracknum = tn_map[e.tracknum]
+         
+   
    def write_to_file(self, f):
       seg = MatroskaElementSegment.new([self.mkv_info, self.tracks] + self.clusters)
       self.ebml_hdr.write_to_file(f)
