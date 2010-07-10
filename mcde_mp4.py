@@ -321,7 +321,6 @@ class MovSampleEntry(MovBoxBranch):
       self.hlen += self.bfmt_len
       super()._init2()
       (self.dri,) = struct.unpack(self.bfmt, self.get_body()[:self.bfmt_len])
-      #self.hlen += self.bfmt_len
    
    def _format_f(self, fs):
       return '<{0} type: {1} dri: {2}>'.format(type(self).__name__, self.type, self.dri)
