@@ -950,7 +950,7 @@ def _dump_elements(seq, depth=0):
       
       if (hasattr(element, 'sub') and (not isinstance(element, (
             MatroskaElementSeekHead,
-            #MatroskaElementCluster,
+            MatroskaElementCluster,
             MatroskaElementCues
          )))):
             _dump_elements(element.sub, depth+1)
