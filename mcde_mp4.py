@@ -278,8 +278,11 @@ class MovBoxMovieHeader(MovFullBox):
    def _format_f(self, s):
       dt_creat = datetime.datetime.fromtimestamp(self.ts_creat)
       dt_mod = datetime.datetime.fromtimestamp(self.ts_mod)
-      return '<{0} type: {1} time_scale: {2} ts_creat: {3} ts_mod: {4}>'.format(type(self).__name__, self.type,
-         self.time_scale, dt_creat, dt_mod)
+      return '<{0} type: {1} time_scale: {2} ts_creat: {3} ts_mod: {4} dur: {5}>'.format(type(self).__name__, self.type,
+         self.time_scale, dt_creat, dt_mod, self.get_dur())
+   
+   def get_dur(self):
+      return self.dur/self.time_scale
 
 
 class MovBoxSampledataBase(MovFullBox):
@@ -401,7 +404,7 @@ class MovSampleEntrySound(MovSampleEntry):
          self.dri, self.channel_count, self.sample_size, self.sample_rate)
 
 @_mov_box_type_reg
-class MovBoxMovieHeader(MovFullBox):
+class MovBoxMediaHeader(MovFullBox):
    type = _make_mbt('mdhd')
    bfmts = {
       0: '>LLLLH2x',
@@ -418,8 +421,11 @@ class MovBoxMovieHeader(MovFullBox):
    def _format_f(self, s):
       dt_creat = datetime.datetime.fromtimestamp(self.ts_creat)
       dt_mod = datetime.datetime.fromtimestamp(self.ts_mod)
-      return '<{0} type: {1} time_scale: {2} ts_creat: {3} ts_mod: {4}>'.format(type(self).__name__, self.type,
-         self.time_scale, dt_creat, dt_mod)
+      return '<{0} type: {1} time_scale: {2} ts_creat: {3} ts_mod: {4} dur: {5}>'.format(type(self).__name__, self.type,
+         self.time_scale, dt_creat, dt_mod, self.get_dur())
+   
+   def get_dur(self):
+      return self.dur/self.time_scale
 
 @_mov_box_type_reg
 class MovBoxTTS(MovBoxSampleTableBase):
@@ -507,10 +513,12 @@ class MovBoxMovie(MovBoxBranch):
       tracks = self.find_subboxes('trak')
       td_gcd = reduce(gcd, (t.get_sample_delta_gcd() for t in tracks))
       ts_base = max(t.get_mdhd().time_scale for t in tracks)
+      dur = max(t.get_mdhd().get_dur() for t in tracks)
       
       mvhd = self.find_subbox('mvhd')
+      dur = max(dur, mvhd.get_dur())
       (tcs, elmult, _tcs_err) = MatroskaBuilder.tcs_from_secdiv(ts_base, td_gcd)
-      mb = MatroskaBuilder(write_app, tcs)
+      mb = MatroskaBuilder(write_app, tcs, dur)
       
       for track in tracks:
          mdhd = track.get_mdhd()
@@ -748,7 +756,7 @@ def main():
       i += 1
 
    mb = movie.make_mkvb('mcde_mp4 selftester')
-   mb.sort_tracks()
+   #mb.sort_tracks()
    mb.write_to_file(open(b'__mp4dump.mkv.tmp', 'wb'))
 
 if (__name__ == '__main__'):

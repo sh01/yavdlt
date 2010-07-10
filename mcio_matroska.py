@@ -294,7 +294,8 @@ class MatroskaElementBaseNum(MatroskaElement):
       bd_len = self._get_body_size()
       body_data = struct.pack(self._get_bfmt(bd_len), _val)
       rv = self._write_header(f, bd_len)
-      rv += f.write(body_data[-1*bd_len:])
+      if (bd_len):
+         rv += f.write(body_data[-1*bd_len:])
       return rv
 
    def get_size(self):
@@ -337,7 +338,9 @@ class MatroskaElementBaseNum(MatroskaElement):
 class MatroskaElementUInt(MatroskaElementBaseNum):
    bfmt = '>Q'
    def _get_body_size(self):
-      return math.ceil(self.val.bit_length()/8)
+      # Mplayer r1.0~rc3 seems to violently dislike the 0-byte case for some reason. Hack around it here to make it happy.
+      # Shame about the wasted space, though.
+      return math.ceil(self.val.bit_length()/8) or 1
 
 class MatroskaElementSInt(MatroskaElementBaseNum):
    bfmt = '>q'
@@ -564,10 +567,20 @@ class MatroskaElementCues(MatroskaElementMaster):
 @_mkv_type_reg
 class MatroskaElementCuePoint(MatroskaElementMaster):
    type = EBMLVInt(59)
+   @classmethod
+   def new(cls, tv):
+      return super().new([MatroskaElementCueTime.new(tv)])
 
 @_mkv_type_reg
 class MatroskaElementCueTrackPositions(MatroskaElementMaster):
    type = EBMLVInt(55)
+   @classmethod
+   def new(cls, tracknum, ccp, cbn):
+      return super().new([
+         MatroskaElementCueTrack.new(tracknum),
+         MatroskaElementCueClusterPosition.new(ccp),
+         MatroskaElementCueBlockNumber.new(cbn),
+      ])
 
 @_mkv_type_reg
 class MatroskaElementCueReference(MatroskaElementMaster):
@@ -713,6 +726,22 @@ class EBMLElementDocTypeReadVersion(MatroskaElementUInt):
    type = EBMLVInt(645)
 
 @_mkv_type_reg
+class MatroskaElementCueClusterPosition(MatroskaElementUInt):
+   type = EBMLVInt(113)
+
+@_mkv_type_reg
+class MatroskaElementCueTime(MatroskaElementUInt):
+   type = EBMLVInt(51)
+
+@_mkv_type_reg
+class MatroskaElementCueTrack(MatroskaElementUInt):
+   type = EBMLVInt(119)
+
+@_mkv_type_reg
+class MatroskaElementCueBlockNumber(MatroskaElementUInt):
+   type = EBMLVInt(4984)
+
+@_mkv_type_reg
 class MatroskaElementTimecodeScale(MatroskaElementUInt):
    type = EBMLVInt(710577)
 
@@ -838,7 +867,7 @@ class MatroskaBuilder:
    TLEN_CLUSTER = 2**16
    TOFF_CLUSTER = 2**15
    
-   def __init__(self, write_app, tcs, ts=None):
+   def __init__(self, write_app, tcs, dur, ts=None):
       self.ebml_hdr = EBMLHeader.new([
          EBMLElementDocType.new('matroska'),
          EBMLElementDocTypeVersion.new(2), 
@@ -848,17 +877,20 @@ class MatroskaBuilder:
       if (ts is None):
          ts = time.time()
       
+      self.dur = MatroskaElementDuration.new(dur*10**9/tcs,8)
+      
       self.mkv_info = MatroskaElementInfo.new([
          MatroskaElementSegmentUID.new(DataRefBytes(_make_random_uid())),
          MatroskaElementTimecodeScale.new(tcs),
          MatroskaElementDateUTC.new(ts),
          MatroskaElementMuxingApp.new(self._get_muxapp()),
-         MatroskaElementWritingApp.new(write_app)
+         MatroskaElementWritingApp.new(write_app),
+         self.dur
       ])
       self.tcs = tcs
       self.tracks = MatroskaElementTracks.new([])
       self.clusters = []
-      #self.mkv_seg = MatroskaElementSegment.new([self.mkv_info])
+      self.cues = {}
       
    def _get_muxapp(self):
       return 'yt_getter.mcio_matroska pre-versioning-version'
@@ -936,14 +968,26 @@ class MatroskaBuilder:
       return (track_num, te)
    
    def _get_cluster(self, tv):
-      """Return cluster for specific timeval."""
+      """Return cluster for specified timeval, creating it if necessary."""
       idx = (tv // self.TLEN_CLUSTER)
       tv_base = len(self.clusters)*self.TLEN_CLUSTER
       while (idx >= len(self.clusters)):
-         self.clusters.append(MatroskaElementCluster.new(tv_base + self.TOFF_CLUSTER))
+         clust = MatroskaElementCluster.new(tv_base + self.TOFF_CLUSTER)
+         clust.__idx = len(self.clusters)
+         clust.__blockcount = 0
+         self.clusters.append(clust)
          tv_base += self.TLEN_CLUSTER
       
       return self.clusters[idx]
+   
+   def _get_cuepoint(self,tv):
+      """Return cuepoint for specified timeval, creating it if necessary."""
+      try:
+         rv = self.cues[tv]
+      except KeyError:
+         rv = MatroskaElementCuePoint.new(tv)
+         self.cues[tv] = rv
+      return rv
    
    def add_track(self, data, ttype, codec, codec_init_data, *args, **kwargs):
       """Add track to MKV structure."""
@@ -955,6 +999,14 @@ class MatroskaBuilder:
          flags = (is_keyframe << 7)
          sblock = MatroskaElementBlock_r.new_simple(track_num, tv_rel, flags, data_r)
          clust.sub.append(sblock)
+         clust.__blockcount += 1
+         
+         if not (is_keyframe):
+            continue
+         # Make cue entry.
+         cp = self._get_cuepoint(tv)
+         ctp = MatroskaElementCueTrackPositions.new(track_num, clust.__idx, clust.__blockcount-1)
+         #cp.sub.append(ctp)
    
    def sort_tracks(self):
       """Sort our tracks by type number, updating any block references."""
@@ -963,10 +1015,20 @@ class MatroskaBuilder:
          for e in c.sub:
             if isinstance(e, MatroskaElementBlock_r):
                e.tracknum = tn_map[e.tracknum]
-         
-   
+      
+      for cp in self.cues.values():
+         for e in cp.sub:
+            if (not isinstance(e, MatroskaElemetCueTrackPositions)):
+               continue
+            for e2 in e.sub:
+               if isinstance(e2, MatroskaElementCueTrack):
+                  e2.val = tn_map[e.tracknum]
+      
    def write_to_file(self, f):
-      seg = MatroskaElementSegment.new([self.mkv_info, self.tracks] + self.clusters)
+      cue_tvs = sorted(self.cues.keys())
+      cues = MatroskaElementCues.new([self.cues[tv] for tv in cue_tvs])
+      seg = MatroskaElementSegment.new([self.mkv_info, self.tracks, cues] + self.clusters)
+      
       self.ebml_hdr.write_to_file(f)
       seg.write_to_file(f)       
 
