@@ -601,6 +601,9 @@ class MovBoxTrackHeader(MovFullBox):
       (ts_creat, ts_mod, self.tid, self.dur, self.layer, self.altgroup, self.vol, self.mat, self.width, self.height
       ) = struct.unpack(self._get_bfmt(), self.get_body())
       
+      self.width /= 65536
+      self.height /= 65536
+      
       self.ts_creat = movts2unixtime(ts_creat)
       self.ts_mod = movts2unixtime(ts_mod)
    
