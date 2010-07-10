@@ -756,7 +756,7 @@ def main():
       i += 1
 
    mb = movie.make_mkvb('mcde_mp4 selftester')
-   #mb.sort_tracks()
+   mb.sort_tracks()
    mb.write_to_file(open(b'__mp4dump.mkv.tmp', 'wb'))
 
 if (__name__ == '__main__'):

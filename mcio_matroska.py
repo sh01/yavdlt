@@ -65,9 +65,9 @@ class EBMLVInt(int):
       rv[prefix_bytes] |= (1 << (7-prefix_bits))
       return rv
    
-   def write_to_file(self, f):
+   def write_to_file(self, c):
       bd = self.get_bindata()
-      return f.write(bd)
+      return c.f.write(bd)
    
    def new(cls, *args, **kwargs):
       return cls(self.type, *args, **kwargs)
@@ -138,12 +138,12 @@ class EBMLElement:
    def __format__(self, s):
       return '{0}({1})'.format(type(self).__name__,(self.type))
    
-   def write_to_file(self, f):
+   def write_to_file(self, *args, **kwargs):
       raise EBMLError('Unrecognized element of type {0}; unable to dump.'.format(self.type))
 
-   def _write_header(self, f, size):
+   def _write_header(self, c, size):
       size = MatroskaVInt(size)
-      return self.type.write_to_file(f) + size.write_to_file(f)
+      return self.type.write_to_file(c) + size.write_to_file(c)
 
    @classmethod
    def _etype2cls(cls, etype):
@@ -224,10 +224,10 @@ class MatroskaElementMaster(MatroskaElement):
       super().__init__(etype)
       self.sub = sub
 
-   def write_to_file(self, f):
-      self._write_header(f, MatroskaVInt(sum(c.get_size() for c in self.sub)))
-      for c in self.sub:
-         c.write_to_file(f)
+   def write_to_file(self, c):
+      self._write_header(c, MatroskaVInt(sum(e.get_size() for e in self.sub)))
+      for e in self.sub:
+         e.write_to_file(c)
 
    def get_size(self):
       bd_size = MatroskaVInt(sum(c.get_size() for c in self.sub))
@@ -260,10 +260,10 @@ class MatroskaElementBinary(MatroskaElement):
       bd_size = self.data_r.get_size()
       return (self.type.size + MatroskaVInt(bd_size).size + bd_size)
 
-   def write_to_file(self, f):
+   def write_to_file(self, c):
       bd = self.data_r.get_data()
-      self._write_header(f, MatroskaVInt(len(bd)))
-      rv = f.write(bd)
+      self._write_header(c, MatroskaVInt(len(bd)))
+      rv = c.f.write(bd)
       if (rv != len(bd)):
          raise IOError()
       return rv
@@ -287,15 +287,15 @@ class MatroskaElementBaseNum(MatroskaElement):
       super().__init__(etype)
       self.val = val
 
-   def write_to_file(self, f, _val=None):
+   def write_to_file(self, c, _val=None):
       if (_val is None):
          _val = self.val
       
       bd_len = self._get_body_size()
       body_data = struct.pack(self._get_bfmt(bd_len), _val)
-      rv = self._write_header(f, bd_len)
+      rv = self._write_header(c, bd_len)
       if (bd_len):
-         rv += f.write(body_data[-1*bd_len:])
+         rv += c.f.write(body_data[-1*bd_len:])
       return rv
 
    def get_size(self):
@@ -402,10 +402,10 @@ class MatroskaElementStringBase(MatroskaElement):
       super().__init__(etype)
       self.val = val
 
-   def write_to_file(self, f):
+   def write_to_file(self, c):
       body_data = self.val.encode(self.codec)
-      rv = self._write_header(f, MatroskaVInt(len(body_data)))
-      rv += f.write(body_data)
+      rv = self._write_header(c, MatroskaVInt(len(body_data)))
+      rv += c.f.write(body_data)
       return rv
 
    def get_size(self):
@@ -438,6 +438,11 @@ class MatroskaElementSignatureSlot(MatroskaElementMaster):
 @_mkv_type_reg
 class MatroskaElementSegment(MatroskaElementMaster):
    type = EBMLVInt(139690087)
+   def write_to_file(self, c):
+      self._write_header(c, MatroskaVInt(sum(e.get_size() for e in self.sub)))
+      c.seg_off = c.f.seek(0,2)
+      for e in self.sub:
+         e.write_to_file(c)
 
 @_mkv_type_reg
 class MatroskaElementSeekHead(MatroskaElementMaster):
@@ -463,6 +468,11 @@ class MatroskaElementCluster(MatroskaElementMaster):
       self = cls(cls.type, [MatroskaElementTimecode.new(timecode)])
       self._tc = timecode
       return self
+   
+   def write_to_file(self, c):
+      if not (c.callback_cluster is None):
+         c.callback_cluster(self, c.f.seek(0,2) - c.seg_off)
+      super().write_to_file(c)
    
    def _get_tc(self):
       return self._tc
@@ -563,6 +573,11 @@ class MatroskaElementContentEncryption(MatroskaElementMaster):
 @_mkv_type_reg
 class MatroskaElementCues(MatroskaElementMaster):
    type = EBMLVInt(206814059)
+   def write_to_file(self, c):
+      if not (c.callback_cues is None):
+         c.callback_cues(c.f.seek(0,2))
+      
+      super().write_to_file(c)
 
 @_mkv_type_reg
 class MatroskaElementCuePoint(MatroskaElementMaster):
@@ -574,13 +589,17 @@ class MatroskaElementCuePoint(MatroskaElementMaster):
 @_mkv_type_reg
 class MatroskaElementCueTrackPositions(MatroskaElementMaster):
    type = EBMLVInt(55)
+   
    @classmethod
-   def new(cls, tracknum, ccp, cbn):
-      return super().new([
+   def new(cls, tracknum, clust_id, cbn):
+      ccp = MatroskaElementCueClusterPosition.new(0)
+      ccp._clust_id = clust_id
+      rv = super().new([
          MatroskaElementCueTrack.new(tracknum),
-         MatroskaElementCueClusterPosition.new(ccp),
+         ccp,
          MatroskaElementCueBlockNumber.new(cbn),
       ])
+      return rv
 
 @_mkv_type_reg
 class MatroskaElementCueReference(MatroskaElementMaster):
@@ -686,11 +705,11 @@ class MatroskaElementBlock_r(MatroskaElement):
       bd_size = self._bfmt_subhdr_len + self.tracknum.size + self.data_r.get_size()
       return (self.type.size + MatroskaVInt(bd_size).size + bd_size)
 
-   def write_to_file(self, f):
+   def write_to_file(self, c):
       bd = self.tracknum.get_bindata() + struct.pack(self._bfmt_subhdr, self.timecode, self.flags) + \
          self.data_r.get_data()
-      self._write_header(f, MatroskaVInt(len(bd)))
-      rv = f.write(bd)
+      self._write_header(c, MatroskaVInt(len(bd)))
+      rv = c.f.write(bd)
       if (rv != len(bd)):
          raise IOError()
       return rv
@@ -728,6 +747,20 @@ class EBMLElementDocTypeReadVersion(MatroskaElementUInt):
 @_mkv_type_reg
 class MatroskaElementCueClusterPosition(MatroskaElementUInt):
    type = EBMLVInt(113)
+   def _get_body_size(self):
+      # Setting this to 64bits should be plenty for currently realistic filesizes.
+      rv = 8
+      if (super()._get_body_size() > rv):
+         raise ValueError('Size limit condition violated :(')
+      return rv
+   
+   def write_to_file(self, c):
+      self._clust_id
+      co = c.cluster_offsets
+      if not (co is None):
+         self.val = co[self._clust_id]
+      return super().write_to_file(c)
+         
 
 @_mkv_type_reg
 class MatroskaElementCueTime(MatroskaElementUInt):
@@ -857,6 +890,12 @@ class MatroskaElementFileMimeType(MatroskaElementStringASCII):
 def _make_random_uid():
    return struct.pack('>QQ', random.getrandbits(64), random.getrandbits(64))
 
+class _OutputCtx:
+   def __init__(self, f):
+      self.f = f
+      self.callback_cluster = None
+      self.callback_cues = None
+      self.cluster_offsets = None
 
 class MatroskaBuilder:
    settings_map = {
@@ -1005,8 +1044,8 @@ class MatroskaBuilder:
             continue
          # Make cue entry.
          cp = self._get_cuepoint(tv)
-         ctp = MatroskaElementCueTrackPositions.new(track_num, clust.__idx, clust.__blockcount-1)
-         #cp.sub.append(ctp)
+         ctp = MatroskaElementCueTrackPositions.new(track_num, id(clust), clust.__blockcount-1)
+         cp.sub.append(ctp)
    
    def sort_tracks(self):
       """Sort our tracks by type number, updating any block references."""
@@ -1018,20 +1057,38 @@ class MatroskaBuilder:
       
       for cp in self.cues.values():
          for e in cp.sub:
-            if (not isinstance(e, MatroskaElemetCueTrackPositions)):
+            if (not isinstance(e, MatroskaElementCueTrackPositions)):
                continue
             for e2 in e.sub:
                if isinstance(e2, MatroskaElementCueTrack):
-                  e2.val = tn_map[e.tracknum]
-      
+                  e2.val = tn_map[e2.val]
+   
    def write_to_file(self, f):
       cue_tvs = sorted(self.cues.keys())
       cues = MatroskaElementCues.new([self.cues[tv] for tv in cue_tvs])
       seg = MatroskaElementSegment.new([self.mkv_info, self.tracks, cues] + self.clusters)
       
-      self.ebml_hdr.write_to_file(f)
-      seg.write_to_file(f)       
-
+      ctx = _OutputCtx(f)
+      self.ebml_hdr.write_to_file(ctx)
+      clust_offs = {}
+      
+      def cc(clust, off):
+         clust_offs[id(clust)] = off
+      
+      cue_off = None
+      def ccues(off):
+         nonlocal cue_off
+         cue_off = off
+      
+      ctx.callback_cluster = cc
+      ctx.callback_cues = ccues
+      seg.write_to_file(ctx)
+      
+      ctx.callback_cluster = None
+      ctx.callback_cues = None
+      ctx.cluster_offsets = clust_offs
+      f.seek(cue_off)
+      cues.write_to_file(ctx)
 
 # ---------------------------------------------------------------- Test code
 def _dump_elements(seq, depth=0):
@@ -1041,7 +1098,7 @@ def _dump_elements(seq, depth=0):
       if (hasattr(element, 'sub') and (not isinstance(element, (
             MatroskaElementSeekHead,
             MatroskaElementCluster,
-            MatroskaElementCues
+            #MatroskaElementCues
          )))):
             _dump_elements(element.sub, depth+1)
 
