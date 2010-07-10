@@ -245,6 +245,20 @@ class MovBoxBranch(MovBox):
 class MovFullBoxBranch(MovBoxBranch, MovFullBox):
    pass
 
+@_mov_box_type_reg
+class MovBoxFtyp(MovBox):
+   type = _make_mbt('ftyp')
+   bfmt = '>LL'
+   bfmt_len = struct.calcsize(bfmt)
+   def _init2(self):
+      super()._init2()
+      (major_brand, minor_brand) = struct.unpack(self.bfmt, self.get_body()[:self.bfmt_len])
+      self.major_brand = _make_mbt(major_brand)
+      self.minor_brand = _make_mbt(minor_brand)
+      self.hlen += self.bfmt_len
+   
+   def _format_f(self, fs):
+      return '<{0} type: {1} major: {2} minor: {3}>'.format(type(self).__name__, self.type, self.major_brand, self.minor_brand)
 
 @_mov_box_type_reg
 class MovBoxMovieHeader(MovFullBox):
