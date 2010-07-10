@@ -532,8 +532,7 @@ class MovBoxMovie(MovBoxBranch):
             continue
          
          ts_fact = (ts_base / mdhd.time_scale)
-         # TrackTimecodeScale doesn't appear to work correctly atm, so we hack around it.
-         mb.add_track(track.get_sample_data(elmult*ts_fact), ttype, mkv_codec, se.get_codec_init_data(), 1.0, *at_args)
+         mb.add_track(track.get_sample_data(elmult*ts_fact), ttype, mkv_codec, se.get_codec_init_data(), *at_args)
       
       return mb
 
