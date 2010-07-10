@@ -20,6 +20,10 @@
 import datetime
 import struct
 
+from fractions import gcd
+from functools import reduce
+
+from mcio_base import *
 
 _mov_td = (datetime.datetime(1970,1,1) - datetime.datetime(1904,1,1))
 _mov_time_offset = -1 * (_mov_td.days*86400 + _mov_td.seconds)
@@ -363,6 +367,7 @@ class MovSampleEntrySound(MovSampleEntry):
    def _init2(self):
       super()._init2()
       (self.channel_count, self.sample_size, self.sample_rate) = struct.unpack(self.bfmt2, self.get_body()[:self.bfmt2_len])
+      self.sample_rate /= 65536
    
    def _format_f(self, fs):
       return '<{0} type: {1} dri: {2} channels: {3} sample size: {4} sample rate: {5}>'.format(type(self).__name__, self.type,
@@ -439,6 +444,46 @@ class MovBoxChunkOffset64(MovBoxChunkOffset):
 @_mov_box_type_reg
 class MovBoxMovie(MovBoxBranch):
    type = _make_mbt(b'moov')
+   CODEC_MAP_MKV = {
+      _make_mbt(b'mp4a'): 'A_AAC',
+      _make_mbt(b'avc1'): 'V_MPEG4/ISO/AVC'
+   }
+   
+   _HTYPE_SOUN = _make_mbt(b'soun')
+   _HTYPE_VIDE = _make_mbt(b'vide')
+   
+   def make_mkvb(self, write_app):
+      import mcio_matroska
+      from mcio_matroska import MatroskaBuilder
+      
+      tracks = self.find_subboxes('trak')
+      td_gcd = reduce(gcd, (t.get_sample_delta_gcd() for t in tracks))
+      
+      mvhd = self.find_subbox('mvhd')
+      (tcs, elmult, _tcs_err) = MatroskaBuilder.tcs_from_secdiv(mvhd.time_scale, td_gcd)
+      mb = MatroskaBuilder(write_app, tcs)
+      
+      for track in tracks:
+         se = track.get_sample_entry()
+         mp4_codec = se.type
+         try:
+            mkv_codec = self.CODEC_MAP_MKV[mp4_codec]
+         except KeyError as exc:
+            raise MovParserError('Unknown mp4 codec {0!a}.'.format(mp4_codec)) from exc
+         
+         htype = track.find_subbox(b'mdia').find_subbox(b'hdlr').handler_type
+         if (htype == self._HTYPE_VIDE):
+            ttype = mcio_matroska.TRACKTYPE_VIDEO
+            at_args = (se.width, se.height)
+         elif (htype == self._HTYPE_SOUN):
+            ttype = mcio_matroska.TRACKTYPE_AUDIO
+            at_args = (round(se.sample_rate), se.channel_count)
+         else:
+            continue
+         
+         mb.add_track(track.get_sample_data(elmult), ttype, mkv_codec, *at_args)
+      
+      return mb
 
 @_mov_box_type_reg
 class MovBoxUserdata(MovBoxBranch):
@@ -450,6 +495,7 @@ class MovBoxTrack(MovBoxBranch):
    def _init2(self):
       super()._init2()
       stbl = self.find_subbox(b'mdia').find_subbox(b'minf').find_subbox(b'stbl')
+      self.stbl = stbl
       self.stts = stbl.find_subbox(b'stts')
       self.stsd = stbl.find_subbox(b'stsd')
       self.stsc = stbl.find_subbox(b'stsc')
@@ -468,15 +514,22 @@ class MovBoxTrack(MovBoxBranch):
       except ValueError:
          self.edts = None
    
+   def get_sample_entry(self):
+      for box in self.stsd.sub:
+         if isinstance(box, MovSampleEntry):
+            return box
+   
    def dump_media_data(self, out):
-      for (timeval, off, sz, sync) in self.get_sample_data():
-         self.c.f.seek(off)
-         block = self.c.f.read(sz)
-         if (len(block) != sz):
+      for (timeval, data_ref, sync) in self.get_sample_data(1):
+         block = data_ref.get_data()
+         if (len(block) != data_ref.get_size()):
             raise MovParserError('Unable to read {0} bytes from offset {1} from {2}.'.format(sz, off, self.f))
          out(block)
    
-   def get_sample_data(self):
+   def get_sample_delta_gcd(self):
+      return reduce(gcd, (e[1] for e in self.stts.entry_data))
+   
+   def get_sample_data(self, time_mult):
       if not (self.edts is None):
          raise MovParserError('EDTS support is currently unimplemented.')
       
@@ -529,7 +582,7 @@ class MovBoxTrack(MovBoxBranch):
             
          
          size = sz[s]
-         yield ((timeval, s_off, size, is_sync))
+         yield ((round(timeval*time_mult), DataRefFile(self.c.f, s_off, size), is_sync))
          s_off += size
          s += 1
          timeval += timedelta
@@ -631,7 +684,8 @@ def main():
    f = open(fn, 'rb')
    boxes = MovBox.build_seq_from_file(f)
    _dump_atoms(boxes)
-   tracks = boxes[1].find_subboxes('trak')
+   movie = boxes[1]
+   tracks = movie.find_subboxes('trak')
    i = 0
    for track in tracks:
       f = open('__mp4dump.{0}.tmp'.format(i), 'wb')
@@ -639,6 +693,8 @@ def main():
       f.close()
       i += 1
 
+   mb = movie.make_mkvb('mcde_mp4 selftester')
+   mb.write_to_file(open(b'__mp4dump.mkv.tmp', 'wb'))
 
 if (__name__ == '__main__'):
    main()
