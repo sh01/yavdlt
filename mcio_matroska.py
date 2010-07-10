@@ -910,7 +910,7 @@ class MatroskaBuilder:
       self.ebml_hdr = EBMLHeader.new([
          EBMLElementDocType.new('matroska'),
          EBMLElementDocTypeVersion.new(2), 
-         EBMLElementDocTypeVersion.new(2)
+         EBMLElementDocTypeReadVersion.new(2)
       ])
       
       if (ts is None):
