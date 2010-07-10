@@ -130,7 +130,6 @@ class MovBox:
          cls = cls.cls_map[btype]
       except KeyError:
          pass
-      
       return cls(ctx, offset, size, hlen, btype)
 
    @classmethod
@@ -321,6 +320,10 @@ class MovSampleEntry(MovBoxBranch):
       self.hlen += self.bfmt_len
       (self.dri,) = struct.unpack(self.bfmt, self.get_body()[:self.bfmt_len])
    
+   def get_codec_init_data(self):
+      """Return codec-specific initialization data. This version always returns None."""
+      return None
+   
    def _format_f(self, fs):
       return '<{0} type: {1} dri: {2}>'.format(type(self).__name__, self.type, self.dri)
 
@@ -373,6 +376,13 @@ class MovSampleEntryVideo(MovSampleEntry):
    def _format_f(self, fs):
       return '<{0} type: {1} dri: {2} cname: {3} dim: {4}x{5} depth: {6}>'.format(type(self).__name__, self.type, self.dri,
          self.cname, self.width, self.height, self.depth)
+
+@_mov_box_type_reg
+class MovSampleEntryVideo_AVC1(MovSampleEntryVideo):
+   type = _make_mbt('avc1')
+   def get_codec_init_data(self):
+      """Return codec-specific initialization data. This version always returns None."""
+      return self.find_subbox('avcC').get_body()
 
 @_mov_sample_entry_type_reg
 class MovSampleEntrySound(MovSampleEntry):
@@ -498,7 +508,7 @@ class MovBoxMovie(MovBoxBranch):
          else:
             continue
          
-         mb.add_track(track.get_sample_data(elmult), ttype, mkv_codec, *at_args)
+         mb.add_track(track.get_sample_data(elmult), ttype, mkv_codec, se.get_codec_init_data(), *at_args)
       
       return mb
 
