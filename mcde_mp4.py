@@ -401,6 +401,27 @@ class MovSampleEntrySound(MovSampleEntry):
          self.dri, self.channel_count, self.sample_size, self.sample_rate)
 
 @_mov_box_type_reg
+class MovBoxMovieHeader(MovFullBox):
+   type = _make_mbt('mdhd')
+   bfmts = {
+      0: '>LLLLH2x',
+      1: '>QQLQH2x'
+   }
+   
+   def _init2(self):
+      super()._init2()
+      (ts_creat, ts_mod, self.time_scale, self.dur, lc_raw) = struct.unpack(self._get_bfmt(), self.get_body())
+      
+      self.ts_creat = movts2unixtime(ts_creat)
+      self.ts_mod = movts2unixtime(ts_mod)
+   
+   def _format_f(self, s):
+      dt_creat = datetime.datetime.fromtimestamp(self.ts_creat)
+      dt_mod = datetime.datetime.fromtimestamp(self.ts_mod)
+      return '<{0} type: {1} time_scale: {2} ts_creat: {3} ts_mod: {4}>'.format(type(self).__name__, self.type,
+         self.time_scale, dt_creat, dt_mod)
+
+@_mov_box_type_reg
 class MovBoxTTS(MovBoxSampleTableBase):
    type = _make_mbt('stts')
    bfmt_entry = '>LL'
@@ -485,12 +506,14 @@ class MovBoxMovie(MovBoxBranch):
       
       tracks = self.find_subboxes('trak')
       td_gcd = reduce(gcd, (t.get_sample_delta_gcd() for t in tracks))
+      ts_base = max(t.get_mdhd().time_scale for t in tracks)
       
       mvhd = self.find_subbox('mvhd')
-      (tcs, elmult, _tcs_err) = MatroskaBuilder.tcs_from_secdiv(mvhd.time_scale, td_gcd)
+      (tcs, elmult, _tcs_err) = MatroskaBuilder.tcs_from_secdiv(ts_base, td_gcd)
       mb = MatroskaBuilder(write_app, tcs)
       
       for track in tracks:
+         mdhd = track.get_mdhd()
          se = track.get_sample_entry()
          mp4_codec = se.type
          try:
@@ -508,7 +531,9 @@ class MovBoxMovie(MovBoxBranch):
          else:
             continue
          
-         mb.add_track(track.get_sample_data(elmult), ttype, mkv_codec, se.get_codec_init_data(), *at_args)
+         ts_fact = (ts_base / mdhd.time_scale)
+         # TrackTimecodeScale doesn't appear to work correctly atm, so we hack around it.
+         mb.add_track(track.get_sample_data(elmult*ts_fact), ttype, mkv_codec, se.get_codec_init_data(), 1.0, *at_args)
       
       return mb
 
@@ -552,6 +577,9 @@ class MovBoxTrack(MovBoxBranch):
          if (len(block) != data_ref.get_size()):
             raise MovParserError('Unable to read {0} bytes from offset {1} from {2}.'.format(sz, off, self.f))
          out(block)
+   
+   def get_mdhd(self):
+      return self.find_subbox('mdia').find_subbox('mdhd')
    
    def get_sample_delta_gcd(self):
       return reduce(gcd, (e[1] for e in self.stts.entry_data))
