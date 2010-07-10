@@ -295,6 +295,7 @@ class YTVideoRef:
       34: 'flv',
       35: 'flv',
       37: 'mp4',
+      38: 'mp4',
       FMT_DEFAULT: 'flv'
    }
    
