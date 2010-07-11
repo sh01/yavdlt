@@ -1034,7 +1034,6 @@ class MatroskaBuilder:
       tv_base = len(self.clusters)*self.TLEN_CLUSTER
       while (idx >= len(self.clusters)):
          clust = MatroskaElementCluster.new(tv_base + self.TOFF_CLUSTER)
-         clust.__idx = len(self.clusters)
          clust.__blockcount = 0
          self.clusters.append(clust)
          tv_base += self.TLEN_CLUSTER
