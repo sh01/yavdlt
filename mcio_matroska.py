@@ -833,6 +833,10 @@ class MatroskaElementBlockDuration(MatroskaElementUInt):
    type = EBMLVInt(27)
 
 @_mkv_type_reg
+class MatroskaElementMaxCache(MatroskaElementUInt):
+   type = EBMLVInt(11751)
+
+@_mkv_type_reg
 class MatroskaElementDefaultDuration(MatroskaElementUInt):
    type = EBMLVInt(254851)
 
