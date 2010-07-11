@@ -315,6 +315,19 @@ class MovBoxSampleTableBase(MovBoxSampledataBase):
       
       self.entry_data = entry_data
 
+class MovBoxSampleTableSimple(MovBoxSampleTableBase):
+   def __iter__(self):
+      return self.entry_data.__iter__()
+
+class MovBoxSampleTableRepeats(MovBoxSampleTableBase):
+   def __iter__(self):
+      for (count, *data) in self.entry_data:
+         for i in range(count):
+            if (len(data) == 1):
+               yield data[0]
+            else:
+               yield data
+   
 
 class MovSampleEntry(MovBoxBranch):
    bfmt = '>6xH'
@@ -428,7 +441,7 @@ class MovBoxMediaHeader(MovFullBox):
       return self.dur/self.time_scale
 
 @_mov_box_type_reg
-class MovBoxTTS(MovBoxSampleTableBase):
+class MovBoxTTS(MovBoxSampleTableRepeats):
    type = _make_mbt('stts')
    bfmt_entry = '>LL'
    def time2sample(self, dt):
@@ -440,7 +453,7 @@ class MovBoxTTS(MovBoxSampleTableBase):
       
 
 @_mov_box_type_reg
-class MovBoxSyncSample(MovBoxSampleTableBase):
+class MovBoxSyncSample(MovBoxSampleTableSimple):
    type = _make_mbt('stss')
    bfmt_entry = '>L'
 
@@ -463,7 +476,7 @@ class MovBoxSampleToChunk(MovBoxSampleTableBase):
       self.entry_data_pp = ed_pp
 
 @_mov_box_type_reg
-class MovBoxSampleSize(MovBoxSampleTableBase):
+class MovBoxSampleSize(MovBoxSampleTableSimple):
    type = _make_mbt('stsz')
    bfmt = '>LL'
    bfmt_len = struct.calcsize(bfmt)
@@ -486,14 +499,19 @@ class MovBoxChunkOffset(MovBoxSampleTableBase):
       return self.entry_data[i]
 
 @_mov_box_type_reg
-class MovBoxChunkOffset32(MovBoxChunkOffset):
+class MovBoxChunkOffset32(MovBoxSampleTableSimple):
    type = _make_mbt('stco')
    bfmt_entry = '>L'
 
 @_mov_box_type_reg
-class MovBoxChunkOffset64(MovBoxChunkOffset):
+class MovBoxChunkOffset64(MovBoxSampleTableSimple):
    type = _make_mbt('co64')
    bfmt_entry = '>Q'
+
+@_mov_box_type_reg
+class MovBoxCompositionTimeToSample(MovBoxSampleTableRepeats):
+   type = _make_mbt('ctts')
+   bfmt_entry = '>LL'
 
 @_mov_box_type_reg
 class MovBoxMovie(MovBoxBranch):
@@ -540,7 +558,8 @@ class MovBoxMovie(MovBoxBranch):
             continue
          
          ts_fact = (ts_base / mdhd.time_scale)
-         mb.add_track(track.get_sample_data(elmult*ts_fact), ttype, mkv_codec, se.get_codec_init_data(), *at_args)
+         mb.add_track(track.get_sample_data(elmult*ts_fact), ttype, mkv_codec, se.get_codec_init_data(),
+            default_dur=round(track._get_most_common_dur()*ts_fact), *at_args)
       
       return mb
 
@@ -559,19 +578,12 @@ class MovBoxTrack(MovBoxBranch):
       self.stsd = stbl.find_subbox(b'stsd')
       self.stsc = stbl.find_subbox(b'stsc')
       self.stsz = stbl.find_subbox(b'stsz')
-      try:
-         self.stss = stbl.find_subbox(b'stss')
-      except ValueError:
-         self.stss = None
-      try:
-         self.stco = stbl.find_subbox(b'stco')
-      except ValueError:
-         self.stco = stbl.find_subbox(b'co64')
-      
-      try:
-         self.edts = self.find_subbox(b'edts')
-      except ValueError:
-         self.edts = None
+      for name in (b'stss', b'stco', b'co64', b'edts', b'ctts'):
+         try:
+            table = stbl.find_subbox(name)
+         except ValueError:
+            table = None
+         setattr(self, name.decode('ascii'), table)
    
    def get_sample_entry(self):
       for box in self.stsd.sub:
@@ -579,7 +591,7 @@ class MovBoxTrack(MovBoxBranch):
             return box
    
    def dump_media_data(self, out):
-      for (timeval, data_ref, sync) in self.get_sample_data(1):
+      for (timeval, dur, data_ref, sync) in self.get_sample_data(1):
          block = data_ref.get_data()
          if (len(block) != data_ref.get_size()):
             raise MovParserError('Unable to read {0} bytes from offset {1} from {2}.'.format(sz, off, self.f))
@@ -591,6 +603,35 @@ class MovBoxTrack(MovBoxBranch):
    def get_sample_delta_gcd(self):
       return reduce(gcd, (e[1] for e in self.stts.entry_data))
    
+   def sample_durations(self):
+      tsi = self.stts.__iter__()
+      if (self.ctts is None):
+         for td in tsi:
+            yield td
+         return
+      
+      coi = self.ctts.__iter__()
+         
+      ts = 0
+      ts_l = []
+      for (td, td_off) in zip(tsi, coi):
+         ts += td
+         ts_l.append(ts + td_off)
+      
+      ts_l.sort()
+      ts_prev = 0
+      for ts in ts_l:
+         yield (ts-ts_prev)
+         ts_prev = ts
+   
+   def _get_most_common_dur(self):
+      from collections import defaultdict
+      dur_freqs = defaultdict(lambda: 0)
+      for dur in self.sample_durations():
+         dur_freqs[dur] += 1
+      
+      return max((val,key) for (key, val) in dur_freqs.items())[1]
+   
    def get_sample_data(self, time_mult):
       if not (self.edts is None):
          raise MovParserError('EDTS support is currently unimplemented.')
@@ -598,12 +639,20 @@ class MovBoxTrack(MovBoxBranch):
       sz = self.stsz.entry_data
       sc = self.stsc.entry_data_pp
       co = self.stco.entry_data
-      ts = self.stts.entry_data
+      tsi = self.stts.__iter__()
+      sduri = self.sample_durations()
+      
       if (self.stss is None):
          ss = None
       else:
          ss = self.stss.entry_data
          ss_i = 0
+      
+      tsi = self.stts.__iter__()
+      if (self.ctts is None):
+         coi = None
+      else:
+         coi = self.ctts.__iter__()
       
       s = 0
       s_lim = len(sz)
@@ -613,8 +662,6 @@ class MovBoxTrack(MovBoxBranch):
       c_lim = 0
       cblock = 0
       
-      ts_i = 0
-      ts_lim = 0
       timeval = 0
       while (s < s_lim):
          if (s >= s_sublim):
@@ -631,20 +678,22 @@ class MovBoxTrack(MovBoxBranch):
          
          if (ss is None):
             is_sync = True
-         elif ((ss_i < len(ss)) and (s == ss[ss_i])):
+         elif ((ss_i < len(ss)) and (s == ss[ss_i]-1)):
             is_sync = True
             ss_i += 1
          else:
             is_sync = False
          
-         while (s >= ts_lim):
-            (scount, timedelta) = ts[ts_i]
-            ts_lim += scount
-            ts_i += 1
-            
+         timedelta = tsi.__next__()
+         
+         tv_d = timeval
+         if not (coi is None):
+            # Disabled for the moment; produces incorrect output for some reason.
+            #tv_d += coi.__next__()
+            pass
          
          size = sz[s]
-         yield ((round(timeval*time_mult), DataRefFile(self.c.f, s_off, size), is_sync))
+         yield ((round(tv_d*time_mult), round(sduri.__next__()*time_mult), DataRefFile(self.c.f, s_off, size), is_sync))
          s_off += size
          s += 1
          timeval += timedelta

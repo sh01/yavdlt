@@ -684,7 +684,7 @@ class MatroskaElementCodecPrivate(MatroskaElementBinary):
 class MatroskaElementBlock_r(MatroskaElement):
    _bfmt_subhdr = '>hB'
    _bfmt_subhdr_len = struct.calcsize(_bfmt_subhdr)
-   def __init__(self, etype, tracknum, timecode, flags, data_r):
+   def __init__(self, etype:int, tracknum:int, timecode:int, flags:int, keyframe:bool, data_r):
       super().__init__(etype)
       
       struct.pack(self._bfmt_subhdr, timecode, flags)
@@ -698,8 +698,9 @@ class MatroskaElementBlock_r(MatroskaElement):
       return cls(MatroskaElementBlock.type, *args, **kwargs)
    
    @classmethod
-   def new_simple(cls, *args, **kwargs):
-      return cls(MatroskaElementSimpleBlock.type, *args, **kwargs)
+   def new_simple(cls, tracknum:int, timecode:int, flags:int, keyframe, *args, **kwargs):
+      flags |= (keyframe << 7)
+      return cls(MatroskaElementSimpleBlock.type, tracknum, timecode, flags, keyframe, *args, **kwargs)
       
    def get_size(self):
       bd_size = self._bfmt_subhdr_len + self.tracknum.size + self.data_r.get_size()
@@ -714,6 +715,16 @@ class MatroskaElementBlock_r(MatroskaElement):
          raise IOError()
       return rv
 
+def _make_block(tracknum, timecode, flags, tc_dependencies, data_r, dur=None):
+   keyframe = (not tc_dependencies)
+   if (dur is None):
+      return MatroskaElementBlock_r.new_simple(tracknum, timecode, flags, keyframe, data_r)
+   
+   se = [MatroskaElementReferenceBlock.new(tc) for tc in tc_dependencies]
+   if not (dur is None):
+      se.append(MatroskaElementBlockDuration.new(dur))
+   se.append(MatroskaElementBlock_r.new(tracknum, timecode, flags, keyframe, data_r))
+   return MatroskaElementBlockGroup.new(se)
 
 # ---------------------------------------------------------------- UInt elements
 @_ebml_type_reg
@@ -820,6 +831,10 @@ class MatroskaElementChannels(MatroskaElementUInt):
 @_mkv_type_reg
 class MatroskaElementBlockDuration(MatroskaElementUInt):
    type = EBMLVInt(27)
+
+@_mkv_type_reg
+class MatroskaElementDefaultDuration(MatroskaElementUInt):
+   type = EBMLVInt(254851)
 
 # ---------------------------------------------------------------- SInt elements
 @_mkv_type_reg
@@ -985,7 +1000,7 @@ class MatroskaBuilder:
       tcs = round(10**9/sdiv/elmult)
       return (tcs, elmult, get_error(elmult))
 
-   def _build_track(self, ttype, codec, cid, *args, **kwargs):
+   def _build_track(self, ttype, codec, cid, default_dur, *args, **kwargs):
       """Build MatroskaElementTrackEntry structure and add to tracks."""
       track_num = len(self.tracks.sub) + 1
       
@@ -997,6 +1012,9 @@ class MatroskaBuilder:
       ]
       if not (cid is None):
          sub_els.append(MatroskaElementCodecPrivate.new(cid))
+      
+      if not (default_dur is None):
+         sub_els.append(MatroskaElementDefaultDuration.new(default_dur))
       
       if (ttype in self.settings_map):
          settings_cls = self.settings_map[ttype]
@@ -1028,24 +1046,31 @@ class MatroskaBuilder:
          self.cues[tv] = rv
       return rv
    
-   def add_track(self, data, ttype, codec, codec_init_data, *args, **kwargs):
+   def add_track(self, data, ttype, codec, codec_init_data, *args, default_dur=None, **kwargs):
       """Add track to MKV structure."""
-      (track_num, track_entry) = self._build_track(ttype, codec, codec_init_data, *args, **kwargs)
-      tv_base = None
-      for (tv, data_r, is_keyframe) in data:
+      (track_num, track_entry) = self._build_track(ttype, codec, codec_init_data, default_dur, *args, **kwargs)
+      tv_prev = None
+      for (tv, dur, data_r, is_keyframe) in data:
          clust = self._get_cluster(tv)
          tv_rel = (tv - clust._tc)
-         flags = (is_keyframe << 7)
-         sblock = MatroskaElementBlock_r.new_simple(track_num, tv_rel, flags, data_r)
-         clust.sub.append(sblock)
+         if ((is_keyframe) or (tv_prev is None)):
+            tc_dependencies = ()
+         else:
+            tc_dependencies = (tv_prev-tv,)
+
+         if (dur == default_dur):
+            dur = None
+         blockthing = _make_block(track_num, tv_rel, 0, tc_dependencies, data_r, dur)
+         clust.sub.append(blockthing)
          clust.__blockcount += 1
          
-         if not (is_keyframe):
-            continue
-         # Make cue entry.
-         cp = self._get_cuepoint(tv)
-         ctp = MatroskaElementCueTrackPositions.new(track_num, id(clust), clust.__blockcount-1)
-         cp.sub.append(ctp)
+         if (is_keyframe):
+            # Make cue entry.
+            cp = self._get_cuepoint(tv)
+            ctp = MatroskaElementCueTrackPositions.new(track_num, id(clust), clust.__blockcount-1)
+            cp.sub.append(ctp)
+         
+         tv_prev = tv
    
    def sort_tracks(self):
       """Sort our tracks by type number, updating any block references."""
@@ -1054,6 +1079,10 @@ class MatroskaBuilder:
          for e in c.sub:
             if isinstance(e, MatroskaElementBlock_r):
                e.tracknum = tn_map[e.tracknum]
+            if (isinstance(e, MatroskaElementBlockGroup)):
+               for e2 in e.sub:
+                  if (isinstance(e2, MatroskaElementBlock_r)):
+                     e2.tracknum = tn_map[e2.tracknum]
       
       for cp in self.cues.values():
          for e in cp.sub:
