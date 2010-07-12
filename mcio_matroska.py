@@ -518,6 +518,9 @@ class MatroskaElementTracks(MatroskaElementMaster):
          rv[id1.val] = MatroskaVInt(i + 1)
          id1.val = id2.val = i + 1
       return rv
+   
+   def get_track(self, idx):
+      return self.sub[idx-1]
          
 
 @_mkv_type_reg
@@ -995,7 +998,6 @@ class MatroskaBuilder:
          clusters.append(c)
          c_max = c._tc + 2**15-1
          c_min = c._tc - 2**15
-         
          c.__blockcount = 0
       
       while (frames):
@@ -1011,7 +1013,7 @@ class MatroskaBuilder:
          c.sub.append(frame.build_blockthing(tn, c._tc))
          c.__blockcount += 1
          
-         if (frame.is_keyframe()):
+         if (frame.is_keyframe() and self.tracks.get_track(tn)._make_cues):
             # Make cue entry.
             try:
                cp = cues[tc]
@@ -1075,7 +1077,7 @@ class MatroskaBuilder:
       tcs = round(10**9/sdiv/elmult)
       return (tcs, elmult, get_error(elmult))
 
-   def _build_track(self, ttype, codec, cid, default_dur, *args, **kwargs):
+   def _build_track(self, ttype, codec, cid, default_dur, make_cues, *args, **kwargs):
       """Build MatroskaElementTrackEntry structure and add to tracks."""
       track_num = len(self.tracks.sub) + 1
       
@@ -1096,12 +1098,13 @@ class MatroskaBuilder:
          sub_els.append(settings_cls.new(*args, **kwargs))
       
       te = MatroskaElementTrackEntry.new(sub_els)
+      te._make_cues = make_cues
       self.tracks.sub.append(te)
       return (track_num, te)
    
-   def add_track(self, data, ttype, codec, codec_init_data, *args, default_dur=None, **kwargs):
+   def add_track(self, data, ttype, codec, codec_init_data, make_cues, *args, default_dur=None, **kwargs):
       """Add track to MKV structure."""
-      (track_num, track_entry) = self._build_track(ttype, codec, codec_init_data, default_dur, *args, **kwargs)
+      (track_num, track_entry) = self._build_track(ttype, codec, codec_init_data, default_dur, make_cues, *args, **kwargs)
       tv_prev = None
       for (tv, dur, data_r, is_keyframe) in data:
          if ((is_keyframe) or (tv_prev is None)):
@@ -1109,7 +1112,7 @@ class MatroskaBuilder:
          else:
             tc_dependencies = (tv_prev-tv,)
          
-         frame = self._add_frame(track_num, tv, 0, tc_dependencies, data_r, dur)         
+         frame = self._add_frame(track_num, tv, 0, tc_dependencies, data_r, dur)
          tv_prev = tv
    
    def sort_tracks(self):
