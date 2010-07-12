@@ -469,29 +469,6 @@ class MatroskaElementCluster(MatroskaElementMaster):
       self._tc = timecode
       return self
    
-   def interleave_blocks(self):
-      """Interleave blocks from different tracks by ts, maintaining the block order inside tracks.
-      
-      There likely exist some playback performance benefits we can get by doing this, but currently the most important use is
-      for testing."""
-      from collections import defaultdict,deque
-      cmap = defaultdict(deque)
-      for el in self.sub:
-         if not (isinstance(el, MatroskaElementBlock_r)):
-            key = -1
-         else:
-            key = el.tracknum
-         cmap[key] += [el]
-      
-      sub_new = cmap[-1]
-      del(cmap[-1])
-      while (cmap):
-         (key, sub_frag) = min(cmap.items(), key=lambda x:x[1][0].get_timecode())
-         sub_new.append(sub_frag.popleft())
-         if (not sub_frag):
-            del(cmap[key])
-      self.sub = list(sub_new)
-   
    def write_to_file(self, c):
       if not (c.callback_cluster is None):
          c.callback_cluster(self, c.f.seek(0,2) - c.seg_off)
@@ -741,17 +718,6 @@ class MatroskaElementBlock_r(MatroskaElement):
          raise IOError()
       return rv
 
-def _make_block(tracknum, timecode, flags, tc_dependencies, data_r, dur=None):
-   keyframe = (not tc_dependencies)
-   if (dur is None):
-      return MatroskaElementBlock_r.new_simple(tracknum, timecode, flags, keyframe, data_r)
-   
-   se = [MatroskaElementReferenceBlock.new(tc) for tc in tc_dependencies]
-   if not (dur is None):
-      se.append(MatroskaElementBlockDuration.new(dur))
-   se.append(MatroskaElementBlock_r.new(tracknum, timecode, flags, keyframe, data_r))
-   return MatroskaElementBlockGroup.new(se)
-
 # ---------------------------------------------------------------- UInt elements
 @_ebml_type_reg
 class EBMLElementVersion(MatroskaElementUInt):
@@ -942,6 +908,28 @@ class _OutputCtx:
       self.callback_cues = None
       self.cluster_offsets = None
 
+class MatroskaFrame:
+   def __init__(self, timecode, flags, tc_dependencies, data_r, dur=None):
+      self.tc = timecode
+      self.flags = flags
+      self.tc_dependencies = tc_dependencies
+      self.data_r = data_r
+      self.dur = dur
+   
+   def is_keyframe(self):
+      return (not self.tc_dependencies)
+   
+   def build_blockthing(self, tracknum, c_off):
+      keyframe = self.is_keyframe()
+      if (self.dur is None):
+         return MatroskaElementBlock_r.new_simple(tracknum, self.tc-c_off, self.flags, keyframe, self.data_r)
+   
+      se = [MatroskaElementReferenceBlock.new(tc) for tc in self.tc_dependencies]
+      if not (self.dur is None):
+         se.append(MatroskaElementBlockDuration.new(self.dur))
+      se.append(MatroskaElementBlock_r.new(tracknum, self.tc-c_off, self.flags, keyframe, self.data_r))
+      return MatroskaElementBlockGroup.new(se)
+
 class MatroskaBuilder:
    settings_map = {
       TRACKTYPE_VIDEO: MatroskaElementVideo,
@@ -950,6 +938,8 @@ class MatroskaBuilder:
    tcs_error_lim_default = 0.0001
    TLEN_CLUSTER = 2**16
    TOFF_CLUSTER = 2**15
+   #TLEN_CLUSTER = 2**15
+   #TOFF_CLUSTER = 0
    
    def __init__(self, write_app, tcs, dur, ts=None):
       self.ebml_hdr = EBMLHeader.new([
@@ -973,12 +963,66 @@ class MatroskaBuilder:
       ])
       self.tcs = tcs
       self.tracks = MatroskaElementTracks.new([])
-      self.clusters = []
-      self.cues = {}
+      self.frames = {}
       
    def _get_muxapp(self):
       return 'yt_getter.mcio_matroska pre-versioning-version'
    
+   def _add_frame(self, tracknum, *args, **kwargs):
+      frame = MatroskaFrame(*args, **kwargs)
+      try:
+         fl = self.frames[tracknum]
+      except KeyError:
+         fl = self.frames[tracknum] = []
+      
+      fl.append(frame)
+      return frame
+   
+   def _build_clusters(self):
+      from collections import deque
+      frames = {}
+      for (key, val) in self.frames.items():
+         frames[key] = deque(val)
+      
+      clusters = deque()
+      cues = {}
+      c = None
+      c_max = -1
+      c_min = 0
+      def add_cluster(tc):
+         nonlocal c, c_max, c_min
+         c = MatroskaElementCluster.new(tc+self.TOFF_CLUSTER)
+         clusters.append(c)
+         c_max = c._tc + 2**15-1
+         c_min = c._tc - 2**15
+         
+         c.__blockcount = 0
+      
+      while (frames):
+         (tn, tframes) = min(frames.items(), key=lambda x:x[1][0].tc)
+         frame = tframes.popleft()
+         tc = frame.tc
+         
+         if (not tframes):
+            del(frames[tn])
+         
+         if ((tc > c_max) or (tc < c_min)):
+            add_cluster(tc)
+         c.sub.append(frame.build_blockthing(tn, c._tc))
+         c.__blockcount += 1
+         
+         if (frame.is_keyframe()):
+            # Make cue entry.
+            try:
+               cp = cues[tc]
+            except KeyError:
+               cp = cues[tc] = MatroskaElementCuePoint.new(tc)
+
+            ctp = MatroskaElementCueTrackPositions.new(tn, id(c), c.__blockcount-1)
+            cp.sub.append(ctp)
+         
+      return (clusters, cues)
+
    @classmethod
    def tcs_from_secdiv(cls, sdiv:int, td_gcd:int, error_lim:float=None) -> ('tcs','elmult','error'):
       """Calculate appropriate mkv timecodescale from (1s/siv) TCS, gcd of timedeltas and desired error.
@@ -1055,77 +1099,35 @@ class MatroskaBuilder:
       self.tracks.sub.append(te)
       return (track_num, te)
    
-   def _get_cluster(self, tv):
-      """Return cluster for specified timeval, creating it if necessary."""
-      idx = (tv // self.TLEN_CLUSTER)
-      tv_base = len(self.clusters)*self.TLEN_CLUSTER
-      while (idx >= len(self.clusters)):
-         clust = MatroskaElementCluster.new(tv_base + self.TOFF_CLUSTER)
-         clust.__blockcount = 0
-         self.clusters.append(clust)
-         tv_base += self.TLEN_CLUSTER
-      
-      return self.clusters[idx]
-   
-   def _get_cuepoint(self,tv):
-      """Return cuepoint for specified timeval, creating it if necessary."""
-      try:
-         rv = self.cues[tv]
-      except KeyError:
-         rv = MatroskaElementCuePoint.new(tv)
-         self.cues[tv] = rv
-      return rv
-   
    def add_track(self, data, ttype, codec, codec_init_data, *args, default_dur=None, **kwargs):
       """Add track to MKV structure."""
       (track_num, track_entry) = self._build_track(ttype, codec, codec_init_data, default_dur, *args, **kwargs)
       tv_prev = None
       for (tv, dur, data_r, is_keyframe) in data:
-         clust = self._get_cluster(tv)
-         tv_rel = (tv - clust._tc)
          if ((is_keyframe) or (tv_prev is None)):
             tc_dependencies = ()
          else:
             tc_dependencies = (tv_prev-tv,)
-
-         blockthing = _make_block(track_num, tv_rel, 0, tc_dependencies, data_r, dur)
-         clust.sub.append(blockthing)
-         clust.__blockcount += 1
          
-         if (is_keyframe):
-            # Make cue entry.
-            cp = self._get_cuepoint(tv)
-            ctp = MatroskaElementCueTrackPositions.new(track_num, id(clust), clust.__blockcount-1)
-            cp.sub.append(ctp)
-         
+         frame = self._add_frame(track_num, tv, 0, tc_dependencies, data_r, dur)         
          tv_prev = tv
    
    def sort_tracks(self):
       """Sort our tracks by type number, updating any block references."""
       tn_map = self.tracks.sort_tracks()
-      for c in self.clusters:
-         for e in c.sub:
-            if isinstance(e, MatroskaElementBlock_r):
-               e.tracknum = tn_map[e.tracknum]
-            if (isinstance(e, MatroskaElementBlockGroup)):
-               for e2 in e.sub:
-                  if (isinstance(e2, MatroskaElementBlock_r)):
-                     e2.tracknum = tn_map[e2.tracknum]
+      frames_new = {}
+      for (tn_old,f) in self.frames.items():
+         frames_new[tn_map[tn_old]] = f
       
-      for cp in self.cues.values():
-         for e in cp.sub:
-            if (not isinstance(e, MatroskaElementCueTrackPositions)):
-               continue
-            for e2 in e.sub:
-               if isinstance(e2, MatroskaElementCueTrack):
-                  e2.val = tn_map[e2.val]
+      self.frames = frames_new
    
    def write_to_file(self, f):
-      cue_tvs = sorted(self.cues.keys())
-      cues = MatroskaElementCues.new([self.cues[tv] for tv in cue_tvs])
-      for c in self.clusters:
-         c.interleave_blocks()
-      seg = MatroskaElementSegment.new([self.mkv_info, self.tracks, cues] + self.clusters)
+      (clusters, cues) = self._build_clusters()
+      cue_tvs = sorted(cues.keys())
+      cues = MatroskaElementCues.new([cues[tv] for tv in cue_tvs])
+      seg_sub = [self.mkv_info, self.tracks, cues]
+      seg_sub.extend(clusters)
+      seg = MatroskaElementSegment.new(seg_sub)
       
       ctx = _OutputCtx(f)
       self.ebml_hdr.write_to_file(ctx)
