@@ -558,8 +558,9 @@ class MovBoxMovie(MovBoxBranch):
             continue
          
          ts_fact = (ts_base / mdhd.time_scale)
-         mb.add_track(track.get_sample_data(elmult*ts_fact), ttype, mkv_codec, se.get_codec_init_data(),
-            default_dur=round(track._get_most_common_dur()*ts_fact), *at_args)
+         mcd = track._get_most_common_dur()
+         mb.add_track(track.get_sample_data(elmult*ts_fact, mcd), ttype, mkv_codec,
+            se.get_codec_init_data(), default_dur=round(10**9*mcd/mdhd.time_scale), *at_args)
       
       return mb
 
@@ -632,14 +633,13 @@ class MovBoxTrack(MovBoxBranch):
       
       return max((val,key) for (key, val) in dur_freqs.items())[1]
    
-   def get_sample_data(self, time_mult):
+   def get_sample_data(self, time_mult, default_dur=None):
       if not (self.edts is None):
          raise MovParserError('EDTS support is currently unimplemented.')
       
       sz = self.stsz.entry_data
       sc = self.stsc.entry_data_pp
       co = self.stco.entry_data
-      tsi = self.stts.__iter__()
       sduri = self.sample_durations()
       
       if (self.stss is None):
@@ -652,6 +652,7 @@ class MovBoxTrack(MovBoxBranch):
       if (self.ctts is None):
          coi = None
       else:
+         base_co = self.ctts.__iter__().__next__()
          coi = self.ctts.__iter__()
       
       s = 0
@@ -689,11 +690,17 @@ class MovBoxTrack(MovBoxBranch):
          tv_d = timeval
          if not (coi is None):
             # Disabled for the moment; produces incorrect output for some reason.
-            #tv_d += coi.__next__()
+            #tv_d += coi.__next__()-base_co
             pass
          
+         dur = sduri.__next__()
+         if (dur == default_dur):
+            dur = None
+         else:
+            dur = round(dur*time_mult)
+         
          size = sz[s]
-         yield ((round(tv_d*time_mult), round(sduri.__next__()*time_mult), DataRefFile(self.c.f, s_off, size), is_sync))
+         yield ((round(tv_d*time_mult), dur, DataRefFile(self.c.f, s_off, size), is_sync))
          s_off += size
          s += 1
          timeval += timedelta

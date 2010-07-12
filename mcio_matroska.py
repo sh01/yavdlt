@@ -958,6 +958,7 @@ class MatroskaBuilder:
       """Calculate appropriate mkv timecodescale from (1s/siv) TCS, gcd of timedeltas and desired error.
       
       Note that error_lim isn't a hard limit; the results will exceed it under sufficiently bad conditions."""
+      
       if (error_lim is None):
          error_lim = cls.tcs_error_lim_default
       
@@ -1061,8 +1062,6 @@ class MatroskaBuilder:
          else:
             tc_dependencies = (tv_prev-tv,)
 
-         if (dur == default_dur):
-            dur = None
          blockthing = _make_block(track_num, tv_rel, 0, tc_dependencies, data_r, dur)
          clust.sub.append(blockthing)
          clust.__blockcount += 1
