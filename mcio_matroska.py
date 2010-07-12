@@ -469,6 +469,29 @@ class MatroskaElementCluster(MatroskaElementMaster):
       self._tc = timecode
       return self
    
+   def interleave_blocks(self):
+      """Interleave blocks from different tracks by ts, maintaining the block order inside tracks.
+      
+      There likely exist some playback performance benefits we can get by doing this, but currently the most important use is
+      for testing."""
+      from collections import defaultdict,deque
+      cmap = defaultdict(deque)
+      for el in self.sub:
+         if not (isinstance(el, MatroskaElementBlock_r)):
+            key = -1
+         else:
+            key = el.tracknum
+         cmap[key] += [el]
+      
+      sub_new = cmap[-1]
+      del(cmap[-1])
+      while (cmap):
+         (key, sub_frag) = min(cmap.items(), key=lambda x:x[1][0].get_timecode())
+         sub_new.append(sub_frag.popleft())
+         if (not sub_frag):
+            del(cmap[key])
+      self.sub = list(sub_new)
+   
    def write_to_file(self, c):
       if not (c.callback_cluster is None):
          c.callback_cluster(self, c.f.seek(0,2) - c.seg_off)
@@ -696,6 +719,9 @@ class MatroskaElementBlock_r(MatroskaElement):
    @classmethod
    def new(cls, *args, **kwargs):
       return cls(MatroskaElementBlock.type, *args, **kwargs)
+   
+   def get_timecode(self):
+      return self.timecode
    
    @classmethod
    def new_simple(cls, tracknum:int, timecode:int, flags:int, keyframe, *args, **kwargs):
@@ -1097,6 +1123,8 @@ class MatroskaBuilder:
    def write_to_file(self, f):
       cue_tvs = sorted(self.cues.keys())
       cues = MatroskaElementCues.new([self.cues[tv] for tv in cue_tvs])
+      for c in self.clusters:
+         c.interleave_blocks()
       seg = MatroskaElementSegment.new([self.mkv_info, self.tracks, cues] + self.clusters)
       
       ctx = _OutputCtx(f)
