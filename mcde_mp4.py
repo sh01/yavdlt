@@ -689,9 +689,7 @@ class MovBoxTrack(MovBoxBranch):
          
          tv_d = timeval
          if not (coi is None):
-            # Disabled for the moment; produces incorrect output for some reason.
-            #tv_d += coi.__next__()-base_co
-            pass
+            tv_d += coi.__next__()-base_co
          
          dur = sduri.__next__()
          if (dur == default_dur):
