@@ -33,7 +33,7 @@ def movts2unixtime(mov_ts):
    """Convert mov TS (seconds since 1904-01-01) to unixtime TS (seconds since 1970-01-01)."""
    return _mov_time_offset + mov_ts
 
-class MovParserError(Exception):
+class MovParserError(ContainerParserError):
    pass
 
 class BoxBoundaryOverrun(MovParserError):

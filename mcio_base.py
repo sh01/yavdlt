@@ -17,6 +17,9 @@
 
 # Media container I/O: Base types
 
+class ContainerParserError(Exception):
+   pass
+
 class DataRef:
    pass
 
