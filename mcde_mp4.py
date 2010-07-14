@@ -802,13 +802,6 @@ def main():
    _dump_atoms(boxes)
    movie = boxes[1]
    tracks = movie.find_subboxes('trak')
-   i = 0
-   for track in tracks:
-      f = open('__mp4dump.{0}.tmp'.format(i), 'wb')
-      track.dump_media_data(f.write)
-      f.close()
-      i += 1
-
    mb = movie.make_mkvb('mcde_mp4 selftester')
    mb.sort_tracks()
    mb.write_to_file(open(b'__mp4dump.mkv.tmp', 'wb'))
