@@ -17,9 +17,11 @@
 
 # Media container data extraction: FLV
 
+import struct
+from collections import namedtuple
+
 from mcio_base import *
 
-import struct
 
 class FLVParserError(ContainerParserError):
    pass
@@ -294,43 +296,399 @@ class FLVScriptData(FLVTag):
       return cls(ts, asp)
 
 
-def _h264_id_get_ls(bd):
-   (config_ver, pi, pc, li, ls_raw, sps_raw) = struct.unpack('>6B', bd[:6])
-   if (config_ver != 1):
-      raise FLVParserError('Incompatible config version {0}.'.format(config_ver))
-   ls = (ls_raw & 3) + 1
-   return ls
+class BitIterator:
+   def __init__(self, s):
+      self._si = iter(s)
+      self._cb = None
+      self._i = 0
+      self.bits_read = 0
+   
+   def __iter__(self):
+      return self
+   
+   def __next__(self):
+      self._i -= 1
+      if (self._i < 0):
+         self._cb = self._si.__next__()[0]
+         self._i = 7
+      
+      self.bits_read += 1
+      return (self._cb & (1 << self._i)) >> self._i
+   
+   def read_bool(self):
+      return bool(self.read_u(1))
+   
+   def read_u(self, l):
+      rv = 0
+      for i in range(l):
+         rv <<= 1
+         rv += self.__next__()
+      return rv
+   
+   def read_ue(self):
+      dbits = 0
+      for bit in self:
+         if (bit != 0):
+            break
+         dbits += 1
+         
+      rv = self.read_u(dbits) + (1 << dbits) - 1
+      return rv
+   
+   def read_se(self):
+      from math import ceil
+      rv = self.read_ue()
+      rv = ceil(rv/2)
+      if (rv % 2 == 0):
+         rv *= -1
+      return rv
 
-def _h264_nalu_seq_read(data_r, length_size):
+
+class H264InitData:
+   def __init__(self, data):
+      self.data = memoryview(data)
+      if (b'\x00\x00\x03' in data):
+         FLVParserError('Emulation prevention byte filtering is currently unsupported.')
+      self.sps_map = {}
+      self.pps_map = {}
+      self._parse_data()
+
+   def _parse_data(self):
+      off = 6
+      (config_ver, profile, level, nls, sps_c) = struct.unpack('BBxBBB', self.data[:off])
+      if (config_ver != 1):
+         raise FLVParserError('Incompatible config version {0}.'.format(config_ver))
+      
+      self.nls = (nls & 3) + 1
+      sps_c &= 31
+      
+      for i in range(sps_c):
+         (sps_l,) = struct.unpack('>H', self.data[off:off+2])
+         off += 2
+         sps = H264NALU(self.data[off:off+sps_l], None).read_body()
+         self.sps_map[sps.id] = sps
+         off += sps_l
+      
+      (pps_c,) = struct.unpack('>B', self.data[off:off+1])
+      off += 1
+      for i in range(pps_c):
+         (pps_l,) = struct.unpack('>H', self.data[off:off+2])
+         off += 2
+         pps = H264NALU(self.data[off:off+sps_l], None).read_body()
+         self.pps_map[pps.id] = pps
+         off += pps_l
+      
+      if (len(self.data) != off):
+         raise FLVParserError('Config parsing failed; unexpected additional trailing data {0}.'.format(bytes(self.data[off:])))
+
+class H264NALU:
+   BODY_HANDLERS = {}
+   SPS_T = namedtuple('SPS', 'id profile_idc level_idc flags seperate_colour_plane chroma_fmt_idc frame_num_bits pic_order_cnt_type max_pic_order_cnt_lsb_bits delta_pic_order_always_zero max_num_ref_frames frame_mbs_only')
+   PPS_T = namedtuple('PPS', 'id sps_id bottom_field_pic_order_in_frame_present weighted_pred weighted_bipred_idc')
+   
+   SLICE_P = 0
+   SLICE_B = 1
+   SLICE_I = 2
+   SLICE_SP = 3
+   SLICE_SI = 4
+   
+   def _rbh(t, _dbh=BODY_HANDLERS):
+      def rv(f):
+         _dbh[t] = f
+         return f
+         
+      return rv
+   
+   def __init__(self, data, initdata):
+      if (b'\x00\x00\x03' in data):
+         FLVParserError('Emulation prevention byte filtering is currently unsupported.')         
+      
+      nal_b1 = data[0]
+      if (isinstance(nal_b1, bytes)):
+         nal_b1 = nal_b1[0]
+      
+      self.type = nal_b1 & 31
+      self.ref_idc = (nal_b1 & 96) >> 5
+      header_len = 1
+      
+      if (nal_b1 >> 7):
+         raise FLVParserError('NAL unit init sequence mismatch.')
+      
+      if (self.ref_idc == 0):
+         if (self.type == 5):
+            raise FLVParserError("Invalid ref_idc {0} for nal unit type {1}.".format(self.ref_idc, self.type))
+      elif (self.type in (6,9,10,11,12)):
+         raise FLVParserError("Invalid ref_idc {0} for nal unit type {1}.".format(self.ref_idc, self.type))
+      
+      if (self.type in (14, 20)):
+         header_len += 3
+      
+      self.initdata = initdata
+      self.data = data
+      self.header_len = header_len
+   
+   def get_body(self):
+      return self.data[self.header_len:]
+   
+   def _get_sps(self, _id):
+      return self.initdata.sps_map[_id]
+
+   def _get_psps(self, _id):
+      pps = self.initdata.pps_map[_id]
+      sps = self._get_sps(pps.sps_id)
+      return (pps, sps)
+
+   def read_body(self):
+      return self.BODY_HANDLERS[self.type](self)
+   
+   @_rbh(1)
+   @_rbh(5)
+   def _rb_slice_without_part(self):
+      bd = self.get_body()
+      bits = BitIterator(bd)
+      fmb = bits.read_ue()
+      s_type = bits.read_ue()
+      
+      (pps, sps) = self._get_psps(bits.read_ue())
+      
+      if (sps.seperate_colour_plane):
+         colour_plane_id = bits.read_u(2)
+         chroma_array_type = sps.chroma_fmt_idc
+      else:
+         chroma_array_type = 0
+      
+      frame_num = bits.read_u(sps.frame_num_bits)
+      
+      bottom_field = False
+      if (not sps.frame_mbs_only):
+         field_pic = bits.read_bool()
+         if (field_pic):
+            bottom_field = bits.read_bool()
+      else:
+         field_pic = False
+      
+      if (self.type == 5):
+         idr_pic_id = bits.read_ue()
+      
+      delta_pic_order_cnt_bottom = 0
+      if (sps.pic_order_cnt_type == 0):
+         pic_order_cnt_lsb = bits.read_u(sps.max_pic_order_cnt_lsb_bits)
+         if (pps.bottom_field_pic_order_in_frame_present and (not field_pic)):
+            delta_pic_order_cnt_bottom = bits.read_ue()
+      elif (sps.pic_order_cnt_type == 1):
+         if (not sps.delta_pic_order_always_zero):
+            dpo_cnt0 = bits.read_ue()
+            if (pps.bottom_field_pic_order_in_frame_present and (not field_pic)):
+               dpo_cnt1 = bits.read_ue()
+      
+      s_typeb = s_type % 5
+      if (s_typeb == self.SLICE_B):
+         direct_spatial_mv_pred = bits.read_bool()
+      if (s_typeb in (self.SLICE_B, self.SLICE_SP, self.SLICE_P)):
+         num_ref_idx_active_override = bits.read_bool()
+         if (num_ref_idx_active_override):
+            num_ref_idx_l0_active = bits.read_ue() + 1
+            if (s_typeb == self.SLICE_B):
+               num_ref_idx_l1_active = bits.read_ue() + 1
+      
+      if (self.type == 20):
+         raise FLVParserError('Type 20 NALUs currently unsupported.')
+      else:
+         # ref_pic_list_modification
+         if not (s_typeb in (2, 4)):
+            ref_pic_list_modification = bits.read_bool()
+            if (ref_pic_list_modification):
+               modification_of_pic_nums_idc = None
+               while (modification_of_pic_nums_idc != 3):
+                  modification_of_pic_nums_idc = bits.read_ue()
+                  if (modification_of_pic_nums_idc in (0,1)):
+                     abs_diff_pic_num = bits.read_ue() - 1
+                     continue
+                  if (modification_of_pic_nums_idc == 2):
+                     long_term_pic_num = bits.read_ue()
+      
+      if ((pps.weighted_pred and (s_typeb in (self.SLICE_P, self.SLICE_B))) or
+         ((pps.weighted_bipred_idc == 1) and (s_typeb == self.SLICE_B))):
+         # pred_weight_table
+         luma_log2_weight_denom = bits.read_ue()
+         if (chroma_array_type != 0):
+            chroma_log2_weight_denom = bits.read_ue()
+         raise FLVParserError('pred_weight_table parsing currently unsupported.')
+         #for i in range(num_ref_idx_l0_active):
+            #_luma_weight_l0 = bits.read_bool()
+            #if (_luma_weight_l0):
+               #bits.read_se()
+               #bits.read_se()
+      
+      mmc_ops = []
+      if (self.ref_idc):
+         # dec_ref_pic_marking
+         if (self.type == 5):
+            no_output_of_prior_pics = bits.read_bool()
+            long_term_reference = bits.read_bool()
+         else:
+            adaptive_ref_pic_marking = bits.read_bool()
+            if (adaptive_ref_pic_marking):
+               mmc_op = None
+               while(mmc_op != 0):
+                  mmc_op = bits.read_ue()
+                  if (mmc_op in (1,3)):
+                     difference_of_pic_nums = bits.read_ue() + 1
+                  if (mmc_op == 2):
+                     long_term_pic_num = bits.read_ue()
+                  if (mmc_op in (3,6)):
+                     long_term_frame_idx = bits.read_ue()
+                  if (mmc_op == 4):
+                     max_long_term_frame_idx = bits.read_ue()-1
+                  mmc_ops.append(mmc_op)
+      
+      #print(self.type, fmb, s_type, frame_num, pic_order_cnt_lsb, mmc_ops, bottom_field)
+      return (pps, sps, pic_order_cnt_lsb, frame_num, mmc_ops, field_pic, bottom_field, delta_pic_order_cnt_bottom)
+   
+   def compute_po(self, prev):
+      (pps, sps, poc_lsb, frame_num, mmc_ops, field_pic, bottom_field, delta_pic_order_cnt_bottom) = self.read_body()
+      poc_t = sps.pic_order_cnt_type
+      
+      if (poc_t == 0):
+         self.mmc_ops = mmc_ops
+         if (self.type == 5):
+            self.poc_msb = 0
+            self.poc_lsb = 0
+            return
+      
+         max_pic_order_cnt_lsb = (1 << sps.max_pic_order_cnt_lsb_bits)
+      
+         if (5 in prev.mmc_ops):
+            raise FLVParserError('Accounting for MMC Op 5 is currently unimplemented.')
+         else:
+            p_poc_msb = prev.poc_msb
+            p_poc_lsb = prev.poc_lsb
+      
+         if ((poc_lsb < p_poc_lsb) and (p_poc_lsb - poc_lsb >= max_pic_order_cnt_lsb/2)):
+            poc_msb = p_poc_msb + max_pic_order_cnt_lsb
+         elif ((poc_lsb > p_poc_lsb) and (poc_lsb - p_poc_lsb > max_pic_order_cnt_lsb/2)):
+            poc_msb = p_poc_msb - max_pic_order_cnt_lsb
+         else:
+            poc_msb = p_poc_msb
+         
+         if (bottom_field):
+            tf_oc = None
+            bf_oc = poc_msb + poc_lsb
+         else:
+            tf_oc = poc_msb + poc_lsb
+            if (not field_pic):
+               bf_oc = tf_oc + delta_pic_order_cnt_bottom
+            else:
+               bf_oc = None
+         
+         self.poc_msb = poc_msb
+         self.poc_lsb = poc_lsb
+         #print(poc_msb, poc_lsb, tf_oc, bf_oc)
+      else:
+         raise FLVParserError('Pic order cnt type {0} interpretation unimplemented.'.format(poc_t))
+
+   @_rbh(8)
+   def _rb_pps(self):
+      data = self.get_body()
+      bits = BitIterator(data)
+      
+      pps_id = bits.read_ue()
+      sps_id = bits.read_ue()
+      ecm = bits.read_u(1)
+      bottom_field_pic_order_in_frame_present = bool(bits.read_u(1))
+      sg_c = bits.read_ue() + 1
+      if (sg_c > 1):
+         sg_map_type = bits.read_ue()
+         if (sg_map_type == 0):
+            run_length = [bits.read_ue() for i in range(sg_c)]
+         elif (sg_map_type == 2):
+            tl_br = [(bits.read_ue(),bits.read_ue()) for i in range(sg_c)]
+         elif (sg_map_type in (3,4,5)):
+            sg_change_direction = bits.read_bool()
+            sg_change_rate = bits.read_ue() + 1
+         elif (sg_map_type == 6):
+            pic_size_in_map_units = bits.read_ue() + 1
+            sgi_len = (sg_c-1).bit_length()
+            slice_group_id = [bits.read_u(sgi_len) for i in range(pic_size_in_map_units)]
+      
+      num_ref_idx_l0_default_active = bits.read_ue() + 1
+      num_ref_idx_l1_default_active = bits.read_ue() + 1
+      weighted_pred = bits.read_bool()
+      weighted_bipred_idc = bits.read_u(2)
+      
+      return self.PPS_T(pps_id, sps_id, bottom_field_pic_order_in_frame_present, weighted_pred, weighted_bipred_idc)
+   
+   @_rbh(7)
+   def _rb_sps(self):
+      data = self.get_body()
+      (profile_idc, flags, level_idc) = struct.unpack('>BBB',data[:3])
+      if (flags & 3):
+         raise FLVParserError("Invalid beginning for sps body.")
+      
+      bits = BitIterator(data[3:])
+      sps_id = bits.read_ue()
+      scpf = False
+      if (profile_idc in (44, 83, 86, 100, 110, 118, 122, 128, 244)):
+         chroma_fmt_idc = bits.read_ue()
+         if (chroma_fmt_idc == 3):
+            scpf = bool(bits.read_u(1))
+         bd_luma = bits.read_ue() + 8
+         bd_chroma = bits.read_ue() + 8
+         qyztbf = bool(bits.read_u(1))
+         ssmp = bool(bits.read_u(1))
+         if (ssmp):
+            if (chroma_fmt_idc == 3):
+               ssmp_len = 12
+            else:
+               ssmp_len = 8
+            bits.read_u(1)
+      else:
+         chroma_fmt_idc = None
+         
+      frame_num_bits = (bits.read_ue() + 4)
+      pic_order_cnt_type = bits.read_ue()
+      
+      max_pic_order_cnt_lsb_bits = None
+      delta_pic_order_a0 = None
+      if (pic_order_cnt_type == 0):
+         max_pic_order_cnt_lsb_bits = (bits.read_ue() + 4)
+      elif (pic_order_cnt_type == 1):
+         delta_pic_order_a0 = bool(bits.read_u(1))
+         nrp_off = bits.read_se()
+         t2b_off = bits.read_se()
+         nrf = bits.read_ue()
+         for i in range(nrf):
+            bits.read_se()
+      
+      max_num_ref_frames = bits.read_ue()
+      gaps_in_frame_num_value_allowed_flag = bool(bits.read_u(1))
+      width_mbs = bits.read_ue() + 1
+      height_mbs = bits.read_ue() + 1
+      frame_mbs_only_flag = bool(bits.read_u(1))
+      
+      return self.SPS_T(sps_id, profile_idc, level_idc, flags, scpf, chroma_fmt_idc, frame_num_bits,
+         pic_order_cnt_type, max_pic_order_cnt_lsb_bits, delta_pic_order_a0, max_num_ref_frames, frame_mbs_only_flag)
+
+   del(_rbh)
+      
+
+def _h264_nalu_seq_read(data_r, initdata):
+   length_size = initdata.nls
    data = memoryview(data_r.get_data())
    lbuf = bytearray(4)
    rv = []
    while (data):
       lbuf[-length_size:] = data[:length_size]
       (body_size,) = struct.unpack('>L', lbuf)
-      nal_b1 = data[length_size][0]
-      nu_type = nal_b1 & 31
-      nu_ref_idc = (nal_b1 & 96) >> 5
+      nalu = H264NALU(data[length_size:length_size+body_size], initdata)
       
-      header_size = length_size
-      
-      #if (nu_type in (5,6,9,10,11,12)):
-         #raise FLVParserError("Invalid ref_idc {0} for nal unit type {1}.".format(nu_ref_idc, nu_type))
-      
-      if (nal_b1 >= 128):
-         raise FLVParserError('NAL unit init sequence mismatch.')
-      
-      skip = body_size + header_size
-      #print(len(data),skip,nu_type)
+      skip = body_size + length_size
       if (skip > len(data)):
-         if (len(data) != 11):
-            print(skip, len(data))
-         #raise FLVParserError('Element boundary overrun.')
+         raise FLVParserError('Element boundary overrun.')
       
       data = data[skip:]
-      rv.append(nu_type)
-   #print(rv)
-      
+      rv.append(nalu)
+   return rv
 
 
 class FLVReader:
@@ -379,6 +737,9 @@ class FLVReader:
       
       return (version, data_off, has_video, has_audio)
    
+   def _v_reorder(self, vfbuf):
+      pass
+   
    def make_mkvb(self, write_app):
       from collections import deque
       import mcio_matroska
@@ -402,6 +763,9 @@ class FLVReader:
          'codec':None
       }
       
+      prev_vn = None
+      vfbuf = []
+      
       for tag in self.parse_tags():
          try:
             d = avtmap[tag.type]
@@ -420,22 +784,29 @@ class FLVReader:
                
          else:
             if not (tag_last.check_stream_consistency(tag)):
-               raise FLVError('Stream metadata inconsistency between {0} and {1}.'.format(tag_prev, tag))
+               raise FLVParserError('Stream metadata inconsistency between {0} and {1}.'.format(tag_prev, tag))
          
          if (tag.is_header()):
             d['init_data'] = tag.data_r.get_data()
          else:
             d['data'].append(tag)
             
-         if (tag.type == 9):
+         if ((tag.type == 9) and (tag.codec == 7)):
+            # H264 data ... try reordering.
             if (tag.is_header()):
-               ls = (_h264_id_get_ls(d['init_data']))
+               vid_id = H264InitData(d['init_data'])
             else:
-               _h264_nalu_seq_read(tag.data_r, ls)
-      
+               (nalu,) = _h264_nalu_seq_read(tag.data_r, vid_id)
+               nalu.compute_po(prev_vn)
+               prev_vn = nalu
+               
+               if (tag.is_keyframe):
+                  self._v_reorder(vfbuf)
+                  del(vfbuf[:])
+               vfbuf.append(tag)
+               
+      self._v_reorder(vfbuf)
       mb = MatroskaBuilder(write_app, 1000000, md['duration'])
-      
-      print(400.186/len(ad['data']), 400.186/len(vd['data']))
       
       try:
          vc_mkv = self.VIDEO_CODEC_MKV_MAP[vd['codec']]
