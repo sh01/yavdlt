@@ -337,6 +337,11 @@ class MatroskaElementBaseNum(MatroskaElement):
 
 class MatroskaElementUInt(MatroskaElementBaseNum):
    bfmt = '>Q'
+   def __init__(self, etype, val, *args, **kwargs):
+      assert(val >= 0)
+      val.bit_length()
+      super().__init__(etype, val, *args, **kwargs)
+   
    def _get_body_size(self):
       # Mplayer r1.0~rc3 seems to violently dislike the 0-byte case for some reason. Hack around it here to make it happy.
       # Shame about the wasted space, though.
@@ -344,6 +349,10 @@ class MatroskaElementUInt(MatroskaElementBaseNum):
 
 class MatroskaElementSInt(MatroskaElementBaseNum):
    bfmt = '>q'
+   def __init__(self, etype, val, *args, **kwargs):
+      val.bit_length()
+      super().__init__(etype, val, *args, **kwargs)
+   
    def _get_body_size(self):
       return math.ceil(((self.val + (self.val < 0)).bit_length() + 1)/8)
    
@@ -356,6 +365,7 @@ class MatroskaElementSInt(MatroskaElementBaseNum):
 class MatroskaElementFloat(MatroskaElementBaseNum):
    def __init__(self, etype, val, body_size):
       super().__init__(etype, val, body_size)
+      float(val)
       self.bfmt = self._get_bfmt(body_size)
       self._body_size = body_size
    
@@ -536,10 +546,11 @@ class MatroskaElementVideo(MatroskaElementMaster):
    type = EBMLVInt(96)
    @classmethod
    def new(cls, width, height):
-      sub = [
-         MatroskaElementPixelWidth.new(width),
-         MatroskaElementPixelHeight.new(height)
-      ]
+      sub = []
+      if not (width is None):
+         sub.append(MatroskaElementPixelWidth.new(width))
+      if not (height is None):
+         sub.append(MatroskaElementPixelHeight.new(height))
       return cls(cls.type, sub)
 
 @_mkv_type_reg
@@ -954,16 +965,18 @@ class MatroskaBuilder:
       if (ts is None):
          ts = time.time()
       
-      self.dur = MatroskaElementDuration.new(dur*10**9/tcs,8)
-      
       self.mkv_info = MatroskaElementInfo.new([
          MatroskaElementSegmentUID.new(DataRefBytes(_make_random_uid())),
          MatroskaElementTimecodeScale.new(tcs),
          MatroskaElementDateUTC.new(ts),
          MatroskaElementMuxingApp.new(self._get_muxapp()),
          MatroskaElementWritingApp.new(write_app),
-         self.dur
       ])
+      
+      self.dur = dur
+      if not (dur is None):
+         self.mkv_info.sub.append(MatroskaElementDuration.new(dur*10**9/tcs,8))
+      
       self.tcs = tcs
       self.tracks = MatroskaElementTracks.new([])
       self.frames = {}
