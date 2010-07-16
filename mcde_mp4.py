@@ -147,14 +147,19 @@ class MovBox:
          hlen = 8
          if (size == 0):
             off = f.seek(0,1)
-            size = f.seek(0,2) - off
+            size = f.seek(0,2) - off_start
             f.seek(off)
       
       if (btype == btype_uuid):
          btype = MovBoxTypeUUID(f.read(16))
          hlen += 16
       
-      return cls.build(ctx, off_start, size, hlen, btype)
+      rv = cls.build(ctx, off_start, size, hlen, btype)
+      
+      if (rv.hlen > size):
+         raise MovParserError('Got box with header length == {0} > total length == {1}.'.format(hlen, size))
+      
+      return rv
    
    @classmethod
    def build_seq_from_ctx(cls, ctx, off_limit=None):
