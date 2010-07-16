@@ -39,25 +39,9 @@ class MovParserError(ContainerParserError):
 class BoxBoundaryOverrun(MovParserError):
    pass
 
-class MovBoxType:
-   pass
+fourcc_uuid = FourCC(b'uuid')
 
-class MovBoxTypeInt(MovBoxType, int):
-   def __new__(cls, x):
-      if (isinstance(x, str)):
-         x = x.encode('ascii')
-      if (isinstance(x, bytes)):
-         (x,) = struct.unpack('>L', x)
-      
-      return int.__new__(cls, x)
-   
-   def __format__(self, s):
-      rv = struct.pack('>L', self)
-      return ascii(rv)
-
-btype_uuid = MovBoxTypeInt(b'uuid')
-
-class MovBoxTypeUUID(MovBoxType, bytes):
+class MovBoxTypeUUID(bytes):
    def __new__(cls, x):
       if (isinstance(x, str)):
          x = x.encode('ascii')
@@ -69,7 +53,7 @@ class MovBoxTypeUUID(MovBoxType, bytes):
 
 def _make_mbt(x):
    if (isinstance(x,int) or (len(x) == 4)):
-      return MovBoxTypeInt(x)
+      return FourCC(x)
    return MovBoxTypeUUID(x)
 
 class MovContext:
@@ -138,7 +122,7 @@ class MovBox:
       off_start = f.seek(0,1)
       header = f.read(8)
       (size, btype) = struct.unpack('>LL', header)
-      btype = MovBoxTypeInt(btype)
+      btype = FourCC(btype)
       if (size == 1):
          extsz = f.read(8)
          (size,) = struct.unpack('>Q', extsz)
@@ -150,7 +134,7 @@ class MovBox:
             size = f.seek(0,2) - off_start
             f.seek(off)
       
-      if (btype == btype_uuid):
+      if (btype == fourcc_uuid):
          btype = MovBoxTypeUUID(f.read(16))
          hlen += 16
       
@@ -251,14 +235,14 @@ class MovFullBoxBranch(MovBoxBranch, MovFullBox):
 
 @_mov_box_type_reg
 class MovBoxFtyp(MovBox):
-   type = _make_mbt('ftyp')
+   type = FourCC('ftyp')
    bfmt = '>LL'
    bfmt_len = struct.calcsize(bfmt)
    def _init2(self):
       super()._init2()
       (major_brand, minor_brand) = struct.unpack(self.bfmt, self.get_body()[:self.bfmt_len])
-      self.major_brand = _make_mbt(major_brand)
-      self.minor_brand = _make_mbt(minor_brand)
+      self.major_brand = FourCC(major_brand)
+      self.minor_brand = FourCC(minor_brand)
       self.hlen += self.bfmt_len
    
    def _format_f(self, fs):
@@ -266,7 +250,7 @@ class MovBoxFtyp(MovBox):
 
 @_mov_box_type_reg
 class MovBoxMovieHeader(MovFullBox):
-   type = _make_mbt('mvhd')
+   type = FourCC('mvhd')
    bfmts = {
       0: '>LLLLLH10x36s7L',
       1: '>QQLQLH10x36s7L'
@@ -351,7 +335,7 @@ class MovSampleEntry(MovBoxBranch):
    
 @_mov_box_type_reg
 class MovBoxSampleDescription(MovFullBoxBranch):
-   type = _make_mbt('stsd')
+   type = FourCC('stsd')
    sub_cls_map = {
    }
    
@@ -379,7 +363,7 @@ def _mov_sample_entry_type_reg(cls):
 
 @_mov_sample_entry_type_reg
 class MovSampleEntryVideo(MovSampleEntry):
-   track_type = _make_mbt(b'vide')
+   track_type = FourCC(b'vide')
    bfmt2 = '>16xHHLL4xHB31sH2x'
    bfmt2_len = struct.calcsize(bfmt2)
    def _init2(self):
@@ -400,14 +384,14 @@ class MovSampleEntryVideo(MovSampleEntry):
 
 @_mov_box_type_reg
 class MovSampleEntryVideo_AVC1(MovSampleEntryVideo):
-   type = _make_mbt('avc1')
+   type = FourCC('avc1')
    def get_codec_init_data(self):
       """Return codec-specific initialization data. This version always returns None."""
       return self.find_subbox('avcC').get_body()
 
 @_mov_sample_entry_type_reg
 class MovSampleEntrySound(MovSampleEntry):
-   track_type = _make_mbt(b'soun')
+   track_type = FourCC(b'soun')
    bfmt2 = '>8xHH4xL'
    bfmt2_len = struct.calcsize(bfmt2)
    def _init2(self):
@@ -423,7 +407,7 @@ class MovSampleEntrySound(MovSampleEntry):
 
 @_mov_box_type_reg
 class MovBoxMediaHeader(MovFullBox):
-   type = _make_mbt('mdhd')
+   type = FourCC('mdhd')
    bfmts = {
       0: '>LLLLH2x',
       1: '>QQLQH2x'
@@ -447,7 +431,7 @@ class MovBoxMediaHeader(MovFullBox):
 
 @_mov_box_type_reg
 class MovBoxTTS(MovBoxSampleTableRepeats):
-   type = _make_mbt('stts')
+   type = FourCC('stts')
    bfmt_entry = '>LL'
    def time2sample(self, dt):
       for (count, dur) in self.data:
@@ -459,12 +443,12 @@ class MovBoxTTS(MovBoxSampleTableRepeats):
 
 @_mov_box_type_reg
 class MovBoxSyncSample(MovBoxSampleTableSimple):
-   type = _make_mbt('stss')
+   type = FourCC('stss')
    bfmt_entry = '>L'
 
 @_mov_box_type_reg
 class MovBoxSampleToChunk(MovBoxSampleTableBase):
-   type = _make_mbt('stsc')
+   type = FourCC('stsc')
    bfmt_entry = '>LLL'
    def _init2(self):
       super()._init2()
@@ -482,7 +466,7 @@ class MovBoxSampleToChunk(MovBoxSampleTableBase):
 
 @_mov_box_type_reg
 class MovBoxSampleSize(MovBoxSampleTableSimple):
-   type = _make_mbt('stsz')
+   type = FourCC('stsz')
    bfmt = '>LL'
    bfmt_len = struct.calcsize(bfmt)
    bfmt_entry = '>L'
@@ -505,29 +489,29 @@ class MovBoxChunkOffset(MovBoxSampleTableBase):
 
 @_mov_box_type_reg
 class MovBoxChunkOffset32(MovBoxSampleTableSimple):
-   type = _make_mbt('stco')
+   type = FourCC('stco')
    bfmt_entry = '>L'
 
 @_mov_box_type_reg
 class MovBoxChunkOffset64(MovBoxSampleTableSimple):
-   type = _make_mbt('co64')
+   type = FourCC('co64')
    bfmt_entry = '>Q'
 
 @_mov_box_type_reg
 class MovBoxCompositionTimeToSample(MovBoxSampleTableRepeats):
-   type = _make_mbt('ctts')
+   type = FourCC('ctts')
    bfmt_entry = '>LL'
 
 @_mov_box_type_reg
 class MovBoxMovie(MovBoxBranch):
-   type = _make_mbt(b'moov')
+   type = FourCC(b'moov')
    CODEC_MAP_MKV = {
-      _make_mbt(b'mp4a'): 'A_AAC',
-      _make_mbt(b'avc1'): 'V_MPEG4/ISO/AVC'
+      FourCC(b'mp4a'): 'A_AAC',
+      FourCC(b'avc1'): 'V_MPEG4/ISO/AVC'
    }
    
-   _HTYPE_SOUN = _make_mbt(b'soun')
-   _HTYPE_VIDE = _make_mbt(b'vide')
+   _HTYPE_SOUN = FourCC(b'soun')
+   _HTYPE_VIDE = FourCC(b'vide')
    
    def make_mkvb(self, write_app):
       import mcio_matroska
@@ -571,11 +555,11 @@ class MovBoxMovie(MovBoxBranch):
 
 @_mov_box_type_reg
 class MovBoxUserdata(MovBoxBranch):
-   type = _make_mbt(b'udta')
+   type = FourCC(b'udta')
 
 @_mov_box_type_reg
 class MovBoxTrack(MovBoxBranch):
-   type = _make_mbt(b'trak')
+   type = FourCC(b'trak')
    def _init2(self):
       super()._init2()
       stbl = self.find_subbox(b'mdia').find_subbox(b'minf').find_subbox(b'stbl')
@@ -711,7 +695,7 @@ class MovBoxTrack(MovBoxBranch):
 
 @_mov_box_type_reg
 class MovBoxMedia(MovBoxBranch):
-   type = _make_mbt(b'mdia')
+   type = FourCC(b'mdia')
    def _init2(self):
       self.c._track_type = None
       super()._init2()
@@ -719,11 +703,11 @@ class MovBoxMedia(MovBoxBranch):
 
 @_mov_box_type_reg
 class MovBoxMeta(MovFullBoxBranch):
-   type = _make_mbt(b'meta')
+   type = FourCC(b'meta')
 
 @_mov_box_type_reg
 class MovBoxHandlerReference(MovFullBox):
-   type = _make_mbt(b'hdlr')
+   type = FourCC(b'hdlr')
    bfmt = '>LL12x'
    bfmt_len = struct.calcsize(bfmt)
    def _init2(self):
@@ -740,31 +724,31 @@ class MovBoxHandlerReference(MovFullBox):
       self.c._track_type = self.handler_type
    
    def _format_f(self, fs):
-      return '<{0} htype: {1} name: {2}>'.format(type(self).__name__, MovBoxTypeInt(self.handler_type), self.name)
+      return '<{0} htype: {1} name: {2}>'.format(type(self).__name__, FourCC(self.handler_type), self.name)
          
 
 @_mov_box_type_reg
 class MovBoxMediaInformation(MovBoxBranch):
-   type = _make_mbt(b'minf')
+   type = FourCC(b'minf')
 
 @_mov_box_type_reg
 class MovBoxDataInformation(MovBoxBranch):
-   type = _make_mbt(b'dinf')
+   type = FourCC(b'dinf')
 
 @_mov_box_type_reg
 class MovBoxDataReference(MovBoxBranch):
-   type = _make_mbt(b'dref')
+   type = FourCC(b'dref')
    def _init2(self):
       self.c.f.seek(self.offset + self.hlen + 4 + 4)
       self.sub = MovBox.build_seq_from_ctx(self.c, self.offset + self.size)
 
 @_mov_box_type_reg
 class MovBoxSampleTable(MovBoxBranch):
-   type = _make_mbt(b'stbl')
+   type = FourCC(b'stbl')
 
 @_mov_box_type_reg
 class MovBoxTrackHeader(MovFullBox):
-   type = _make_mbt(b'tkhd')
+   type = FourCC(b'tkhd')
    bfmts = {
       0: '>LLL4xL8xhhhxx36sLL',
       1: '>QQL4xQ8xhhhxx36sLL'
@@ -788,7 +772,7 @@ class MovBoxTrackHeader(MovFullBox):
 
 @_mov_box_type_reg
 class MovBoxEditList(MovBoxBranch):
-   type = _make_mbt(b'edts')
+   type = FourCC(b'edts')
 
 
 def _dump_atoms(seq, depth=0):

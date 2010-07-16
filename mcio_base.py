@@ -17,6 +17,8 @@
 
 # Media container I/O: Base types
 
+import struct
+
 class ContainerParserError(Exception):
    pass
 
@@ -49,3 +51,18 @@ class DataRefBytes(DataRef, bytes):
       
    def get_size(self):
       return len(self)
+
+
+class FourCC(int):
+   def __new__(cls, x):
+      if (isinstance(x, str)):
+         x = x.encode('ascii')
+      if (isinstance(x, bytes)):
+         (x,) = struct.unpack('>L', x)
+      
+      assert(struct.pack('>L', x))
+      return int.__new__(cls, x)
+   
+   def __format__(self, s):
+      rv = struct.pack('>L', self)
+      return ascii(rv)
