@@ -825,7 +825,7 @@ class FLVReader:
       if not (height is None):
          height = int(height)
       mb.add_track((t.get_framedata() for t in vd['data']), mcio_matroska.TRACKTYPE_VIDEO, vc_id, vd['init_data'], True,
-         width, height, ms_cm=2)
+         width, height)
          
       try:
          ac_id = self.CODEC2ID_A[ad['codec']]
