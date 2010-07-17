@@ -542,11 +542,11 @@ class H264NALU:
                      max_long_term_frame_idx = bits.read_ue()-1
                   mmc_ops.append(mmc_op)
       
-      #print(self.type, fmb, s_type, frame_num, pic_order_cnt_lsb, mmc_ops, bottom_field)
-      return (pps, sps, pic_order_cnt_lsb, frame_num, mmc_ops, field_pic, bottom_field, delta_pic_order_cnt_bottom)
+      #print(self.type, fmb, s_type, frame_num, pic_order_cnt_lsb, mmc_ops, bottom_field, end=', ')
+      return (s_type % 5, pps, sps, pic_order_cnt_lsb, frame_num, mmc_ops, field_pic, bottom_field, delta_pic_order_cnt_bottom)
    
    def compute_po(self, prev):
-      (pps, sps, poc_lsb, frame_num, mmc_ops, field_pic, bottom_field, delta_pic_order_cnt_bottom) = self.read_body()
+      (s_type, pps, sps, poc_lsb, frame_num, mmc_ops, field_pic, bottom_field, delta_pic_order_cnt_bottom) = self.read_body()
       poc_t = sps.pic_order_cnt_type
       
       if (poc_t == 0):
@@ -583,7 +583,7 @@ class H264NALU:
          
          self.poc_msb = poc_msb
          self.poc_lsb = poc_lsb
-         #print(poc_msb, poc_lsb, tf_oc, bf_oc)
+         #print(frame_num, s_type, poc_msb, poc_lsb, tf_oc, bf_oc)
       else:
          raise FLVParserError('Pic order cnt type {0} interpretation unimplemented.'.format(poc_t))
 
@@ -742,9 +742,6 @@ class FLVReader:
       
       return (version, data_off, has_video, has_audio)
    
-   def _v_reorder(self, vfbuf):
-      pass
-   
    def make_mkvb(self, write_app):
       from collections import deque
       import mcio_matroska
@@ -769,7 +766,7 @@ class FLVReader:
       }
       
       prev_vn = None
-      vfbuf = []
+      #vfbuf = []
       
       for tag in self.parse_tags():
          try:
@@ -796,21 +793,20 @@ class FLVReader:
          else:
             d['data'].append(tag)
             
-         if ((tag.type == 9) and (tag.codec == 7)):
-            # H264 data ... try reordering.
-            if (tag.is_header()):
-               vid_id = H264InitData(d['init_data'])
-            else:
-               (nalu,) = _h264_nalu_seq_read(tag.data_r, vid_id)
-               nalu.compute_po(prev_vn)
-               prev_vn = nalu
+         #if ((tag.type == 9) and (tag.codec == 7)):
+            ## H264 data ... try reordering.
+            #if (tag.is_header()):
+               #vid_id = H264InitData(d['init_data'])
+            #else:
+               #(nalu,) = _h264_nalu_seq_read(tag.data_r, vid_id)
+               #nalu.compute_po(prev_vn)
+               #prev_vn = nalu
                
-               if (tag.is_keyframe):
-                  self._v_reorder(vfbuf)
-                  del(vfbuf[:])
-               vfbuf.append(tag)
+               #if (tag.is_keyframe):
+                  #self._v_reorder(vfbuf)
+                  #del(vfbuf[:])
+               #vfbuf.append(tag)
                
-      self._v_reorder(vfbuf)
       mb = MatroskaBuilder(write_app, 1000000, md['duration'])
       
       try:
