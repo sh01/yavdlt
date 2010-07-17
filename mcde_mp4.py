@@ -24,6 +24,7 @@ from fractions import gcd
 from functools import reduce
 
 from mcio_base import *
+from mcio_codecs import *
 
 _mov_td = (datetime.datetime(1970,1,1) - datetime.datetime(1904,1,1))
 _mov_time_offset = -1 * (_mov_td.days*86400 + _mov_td.seconds)
@@ -505,9 +506,9 @@ class MovBoxCompositionTimeToSample(MovBoxSampleTableRepeats):
 @_mov_box_type_reg
 class MovBoxMovie(MovBoxBranch):
    type = FourCC(b'moov')
-   CODEC_MAP_MKV = {
-      FourCC(b'mp4a'): 'A_AAC',
-      FourCC(b'avc1'): 'V_MPEG4/ISO/AVC'
+   CODEC2ID = {
+      FourCC(b'mp4a'): CODEC_ID_AAC,
+      FourCC(b'avc1'): CODEC_ID_MPEG4_10
    }
    
    _HTYPE_SOUN = FourCC(b'soun')
@@ -532,7 +533,7 @@ class MovBoxMovie(MovBoxBranch):
          se = track.get_sample_entry()
          mp4_codec = se.type
          try:
-            mkv_codec = self.CODEC_MAP_MKV[mp4_codec]
+            codec_id = self.CODEC2ID[mp4_codec]
          except KeyError as exc:
             raise MovParserError('Unknown mp4 codec {0!a}.'.format(mp4_codec)) from exc
          
@@ -548,7 +549,7 @@ class MovBoxMovie(MovBoxBranch):
          
          ts_fact = (ts_base / mdhd.time_scale)
          mcd = track._get_most_common_dur()
-         mb.add_track(track.get_sample_data(elmult*ts_fact, mcd), ttype, mkv_codec, se.get_codec_init_data(),
+         mb.add_track(track.get_sample_data(elmult*ts_fact, mcd), ttype, codec_id, se.get_codec_init_data(),
             not (track.stts is None), default_dur=round(10**9*mcd/mdhd.time_scale), *at_args)
       
       return mb

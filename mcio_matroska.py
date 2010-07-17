@@ -23,6 +23,7 @@ import random
 import struct
 import time
 
+from mcio_codecs import *
 from mcio_base import *
 
 class MatroskaBaseError(Exception):
@@ -974,7 +975,32 @@ class MatroskaBuilder:
    TOFF_CLUSTER = 2**15
    #TLEN_CLUSTER = 2**15
    #TOFF_CLUSTER = 0
-   CODEC_AVI_VFW = 'V_MS/VFW/FOURCC'
+   
+   ID2CODEC = {
+      #video
+      CODEC_ID_MPEG1: 'V_MPEG1',
+      CODEC_ID_MPEG2: 'V_MPEG2',
+      CODEC_ID_MPEG4_2: 'V_MPEG4/ISO/ASP',
+      CODEC_ID_MPEG4_10: 'V_MPEG4/ISO/AVC',
+      CODEC_ID_SNOW: 'V_SNOW',
+      CODEC_ID_THEORA: 'V_THEORA',
+      # audio
+      CODEC_ID_AAC: 'A_AAC',
+      CODEC_ID_AC3: 'A_AC3',
+      CODEC_ID_DTS: 'A_DTS',
+      CODEC_ID_FLAC: 'A_FLAC',
+      CODEC_ID_MP1: 'A_MPEG/L1',
+      CODEC_ID_MP2: 'A_MPEG/L2',
+      CODEC_ID_MP3: 'A_MPEG/L3',
+      CODEC_ID_VORBIS: 'A_VORBIS',
+      # pseudo codecs
+      CODEC_ID_MKV_MSC_VFW: 'V_MS/VFW/FOURCC',
+      CODEC_ID_MKV_MSC_ACM: 'A_MS/ACM'
+   }
+   
+   AVI_CM_NEVER = 0
+   AVI_CM_AUTO = 1
+   AVI_CM_FORCE = 2
    
    def __init__(self, write_app, tcs, dur, ts=None):
       self.ebml_hdr = EBMLHeader.new([
@@ -1111,15 +1137,16 @@ class MatroskaBuilder:
       tcs = round(10**9/sdiv/elmult)
       return (tcs, elmult, get_error(elmult))
 
-   def _build_track(self, ttype, codec, cid, default_dur, make_cues, *args, **kwargs):
+   def _build_track(self, ttype, codec_id, cid, default_dur, make_cues, *args, **kwargs):
       """Build MatroskaElementTrackEntry structure and add to tracks."""
       track_num = len(self.tracks.sub) + 1
+      mkv_codec = self.ID2CODEC[codec_id]
       
       sub_els = [
          MatroskaElementTrackNumber.new(track_num),
          MatroskaElementTrackUID.new(track_num),
          MatroskaElementTrackType.new(ttype),
-         MatroskaElementCodec.new(codec)
+         MatroskaElementCodec.new(mkv_codec)
       ]
       if not (cid is None):
          sub_els.append(MatroskaElementCodecPrivate.new(cid))
@@ -1144,9 +1171,10 @@ class MatroskaBuilder:
       if not (codec_init_data is None):
          cid2 += codec_init_data
       
-      self.add_track(data, ttype, self.CODEC_AVI_VFW, cid2, make_cues, *args, height=height, width=width, **kwargs)
+      self.add_track(data, ttype, CODEC_ID_MKV_MSC_VFW, cid2, make_cues, *args, height=height, width=width, **kwargs)
    
-   def add_track(self, data, ttype, codec, codec_init_data, make_cues, *args, default_dur=None, **kwargs):
+   def add_track(self, data, ttype, codec, codec_init_data, make_cues, *args, default_dur=None, avi_compat_mode=AVI_CM_AUTO,
+         **kwargs):
       """Add track to MKV structure."""
       (track_num, track_entry) = self._build_track(ttype, codec, codec_init_data, default_dur, make_cues, *args, **kwargs)
       tv_prev = None

@@ -21,7 +21,7 @@ import struct
 from collections import namedtuple
 
 from mcio_base import *
-
+from mcio_codecs import *
 
 class FLVParserError(ContainerParserError):
    pass
@@ -700,18 +700,18 @@ class FLVReader:
    
    tagtype_cls_map = {}
    
-   VIDEO_CODEC_MKV_MAP = {
-      7: 'V_MPEG4/ISO/AVC'
+   CODEC2ID_V = {
+      7: CODEC_ID_MPEG4_10
+   }
+   
+   CODEC2ID_A = {
+       2: CODEC_ID_MP3,
+      10: CODEC_ID_AAC,
+      14: CODEC_ID_MP3
    }
    
    VIDEO_CODEC_FOURCC_MAP = {
       2: FourCC(b'FLV1')
-   }
-   
-   AUDIO_CODEC_MKV_MAP = {
-       2: 'A_MPEG/L3',
-      10: 'A_AAC',
-      14: 'A_MPEG/L3'
    }
    
    for _cls in (FLVAudioData, FLVVideoData, FLVScriptData):
@@ -813,7 +813,7 @@ class FLVReader:
       mb = MatroskaBuilder(write_app, 1000000, md['duration'])
       
       try:
-         vc_mkv = self.VIDEO_CODEC_MKV_MAP[vd['codec']]
+         vc_mkv = self.CODEC2ID_V[vd['codec']]
       except KeyError:
          try:
             vc_mkv = self.VIDEO_CODEC_FOURCC_MAP[vd['codec']]
@@ -835,11 +835,11 @@ class FLVReader:
             width, height)
          
       try:
-         ac_mkv = self.AUDIO_CODEC_MKV_MAP[ad['codec']]
+         ac_id = self.CODEC2ID_A[ad['codec']]
       except KeyError:
          pass
       else:
-         mb.add_track((t.get_framedata() for t in ad['data']), mcio_matroska.TRACKTYPE_AUDIO, ac_mkv, ad['init_data'], False,
+         mb.add_track((t.get_framedata() for t in ad['data']), mcio_matroska.TRACKTYPE_AUDIO, ac_id, ad['init_data'], False,
             ad['sfreq'], ad['channel_count'])
       
       return mb
