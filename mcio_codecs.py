@@ -42,6 +42,12 @@ def __init():
       ('H264', 'AVC', 'MPEG4_10'),
       'SNOW',
       'THEORA',
+      ## flash video stuff
+      'FLASHSV', # flash screen video
+      'FLV1', # H263 variant: flash video
+      'VP6',
+      'VP6A',
+      
       # audio codecs
       'AAC',
       'AC3',
@@ -50,6 +56,7 @@ def __init():
       ('MP1', 'MPEG1_1'),
       ('MP2', 'MPEG1_2'),
       ('MP3', 'MPEG1_3'),
+      'SPEEX',
       'VORBIS',
       
       # pseudo codecs: MKV

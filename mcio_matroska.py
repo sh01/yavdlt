@@ -26,7 +26,7 @@ import time
 from mcio_codecs import *
 from mcio_base import *
 
-class MatroskaBaseError(Exception):
+class MatroskaBaseError(ContainerError):
    pass
 
 class EBMLError(MatroskaBaseError):
@@ -950,10 +950,19 @@ class BitmapInfoHeader:
    BFMT = '<lllhh4slllll'
    BFMT_LEN = struct.calcsize(BFMT)
    
-   def __init__(self, width, height, codec):
+   WRAP_CODEC_ID = CODEC_ID_MKV_MSC_VFW
+   
+   ID2CODEC = {
+      CODEC_ID_FLV1: FourCC(b'FLV1')
+   }
+   
+   def __init__(self, codec_id, width, height):
       self.width = width
       self.height = height
-      self.codec = FourCC(codec)
+      try:
+         self.codec = self.ID2CODEC[codec_id]
+      except KeyError as exc:
+         raise ContainerCodecError("Can't encapsulate {0} data into {1} as part of MS compatibility mode.".format(codec_id, type(self).__name__)) from exc
       self.planes = 1
       self.colour_depth = 0
       self.x_ppm = 0
@@ -975,6 +984,10 @@ class MatroskaBuilder:
    TOFF_CLUSTER = 2**15
    #TLEN_CLUSTER = 2**15
    #TOFF_CLUSTER = 0
+   
+   MS_CM_CLS_MAP = {
+      TRACKTYPE_VIDEO: BitmapInfoHeader
+   }
    
    ID2CODEC = {
       #video
@@ -998,9 +1011,9 @@ class MatroskaBuilder:
       CODEC_ID_MKV_MSC_ACM: 'A_MS/ACM'
    }
    
-   AVI_CM_NEVER = 0
-   AVI_CM_AUTO = 1
-   AVI_CM_FORCE = 2
+   MS_CM_NEVER = 0
+   MS_CM_AUTO = 1
+   MS_CM_FORCE = 2
    
    def __init__(self, write_app, tcs, dur, ts=None):
       self.ebml_hdr = EBMLHeader.new([
@@ -1137,10 +1150,34 @@ class MatroskaBuilder:
       tcs = round(10**9/sdiv/elmult)
       return (tcs, elmult, get_error(elmult))
 
-   def _build_track(self, ttype, codec_id, cid, default_dur, make_cues, *args, **kwargs):
+   def _build_track(self, ttype, codec_id, cid, default_dur, make_cues, ms_cm, *args, **kwargs):
       """Build MatroskaElementTrackEntry structure and add to tracks."""
       track_num = len(self.tracks.sub) + 1
-      mkv_codec = self.ID2CODEC[codec_id]
+      
+      try_ms_cm = (ms_cm == self.MS_CM_FORCE)
+      if not (try_ms_cm):
+         try:
+            mkv_codec = self.ID2CODEC[codec_id]
+         except KeyError as exc:
+            if not (ms_cm):
+               raise ContainerCodecError("Can't natively encapsulate {0} data into MKV, and wasn't supposed to try MS compatibility mode.".format(codec_id)) from exc
+               
+            try_ms_cm = True
+      
+      if (try_ms_cm):
+         try:
+            ms_cm_cls = self.MS_CM_CLS_MAP[ttype]
+         except KeyError as exc:
+            raise ContainerCodecError("MS compatibility mode for track type {0} is currently not supported.")
+         
+         ms_header = ms_cm_cls(codec_id, *args, **kwargs)
+         cid2 = ms_header.get_bindata()
+         if not (cid is None):
+            cid2 += cid
+         cid = cid2
+         
+         codec_id = ms_cm_cls.WRAP_CODEC_ID
+         mkv_codec = self.ID2CODEC[codec_id]
       
       sub_els = [
          MatroskaElementTrackNumber.new(track_num),
@@ -1163,20 +1200,10 @@ class MatroskaBuilder:
       self.tracks.sub.append(te)
       return (track_num, te)
    
-   def add_track_vavi_vfw_c(self, data, ttype, codec, codec_init_data, make_cues, width, height, *args, **kwargs):
-      """Add track in AVI/VFW compatibility mode."""
-      assert (ttype == TRACKTYPE_VIDEO)
-      bih = BitmapInfoHeader(width, height, codec)
-      cid2 = bih.get_bindata()
-      if not (codec_init_data is None):
-         cid2 += codec_init_data
-      
-      self.add_track(data, ttype, CODEC_ID_MKV_MSC_VFW, cid2, make_cues, *args, height=height, width=width, **kwargs)
-   
-   def add_track(self, data, ttype, codec, codec_init_data, make_cues, *args, default_dur=None, avi_compat_mode=AVI_CM_AUTO,
+   def add_track(self, data, ttype, codec, codec_init_data, make_cues, *args, default_dur=None, ms_cm=MS_CM_AUTO,
          **kwargs):
       """Add track to MKV structure."""
-      (track_num, track_entry) = self._build_track(ttype, codec, codec_init_data, default_dur, make_cues, *args, **kwargs)
+      (track_num, track_entry) = self._build_track(ttype, codec, codec_init_data, default_dur, make_cues, ms_cm, *args, **kwargs)
       tv_prev = None
       for (tv, dur, data_r, is_keyframe) in data:
          if ((is_keyframe) or (tv_prev is None)):

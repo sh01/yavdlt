@@ -19,7 +19,13 @@
 
 import struct
 
-class ContainerParserError(Exception):
+class ContainerError(Exception):
+   pass
+
+class ContainerParserError(ContainerError):
+   pass
+
+class ContainerCodecError(ContainerError):
    pass
 
 class DataRef:

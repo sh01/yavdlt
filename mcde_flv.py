@@ -701,17 +701,18 @@ class FLVReader:
    tagtype_cls_map = {}
    
    CODEC2ID_V = {
+      2: CODEC_ID_FLV1,
+      3: CODEC_ID_FLASHSV,
+      4: CODEC_ID_VP6,
+      5: CODEC_ID_VP6A,
       7: CODEC_ID_MPEG4_10
    }
    
    CODEC2ID_A = {
        2: CODEC_ID_MP3,
       10: CODEC_ID_AAC,
+      11: CODEC_ID_SPEEX,
       14: CODEC_ID_MP3
-   }
-   
-   VIDEO_CODEC_FOURCC_MAP = {
-      2: FourCC(b'FLV1')
    }
    
    for _cls in (FLVAudioData, FLVVideoData, FLVScriptData):
@@ -813,34 +814,26 @@ class FLVReader:
       mb = MatroskaBuilder(write_app, 1000000, md['duration'])
       
       try:
-         vc_mkv = self.CODEC2ID_V[vd['codec']]
+         vc_id = self.CODEC2ID_V[vd['codec']]
       except KeyError:
-         try:
-            vc_mkv = self.VIDEO_CODEC_FOURCC_MAP[vd['codec']]
-         except KeyError:
-            mb_vat = None
-         else:
-            mb_vat = mb.add_track_vavi_vfw_c
-      else:
-         mb_vat = mb.add_track
+         raise FLVParserError('Unknown video codec {0}.'.format(vd['codec']))
          
-      if not (mb_vat is None):
-         width = md['width']
-         height = int(md['height'])
-         if not (width is None):
-            width = int(width)
-         if not (height is None):
-            height = int(height)
-         mb_vat((t.get_framedata() for t in vd['data']), mcio_matroska.TRACKTYPE_VIDEO, vc_mkv, vd['init_data'], True,
-            width, height)
+      width = md['width']
+      height = md['height']
+      if not (width is None):
+         width = int(width)
+      if not (height is None):
+         height = int(height)
+      mb.add_track((t.get_framedata() for t in vd['data']), mcio_matroska.TRACKTYPE_VIDEO, vc_id, vd['init_data'], True,
+         width, height, ms_cm=2)
          
       try:
          ac_id = self.CODEC2ID_A[ad['codec']]
       except KeyError:
-         pass
-      else:
-         mb.add_track((t.get_framedata() for t in ad['data']), mcio_matroska.TRACKTYPE_AUDIO, ac_id, ad['init_data'], False,
-            ad['sfreq'], ad['channel_count'])
+         raise FLVParserError('Unknown audio codec {0}.'.format(ad['codec']))
+      
+      mb.add_track((t.get_framedata() for t in ad['data']), mcio_matroska.TRACKTYPE_AUDIO, ac_id, ad['init_data'], False,
+         ad['sfreq'], ad['channel_count'])
       
       return mb
    
