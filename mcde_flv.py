@@ -704,6 +704,10 @@ class FLVReader:
       7: 'V_MPEG4/ISO/AVC'
    }
    
+   VIDEO_CODEC_FOURCC_MAP = {
+      2: FourCC(b'FLV1')
+   }
+   
    AUDIO_CODEC_MKV_MAP = {
        2: 'A_MPEG/L3',
       10: 'A_AAC',
@@ -811,15 +815,23 @@ class FLVReader:
       try:
          vc_mkv = self.VIDEO_CODEC_MKV_MAP[vd['codec']]
       except KeyError:
-         pass
+         try:
+            vc_mkv = self.VIDEO_CODEC_FOURCC_MAP[vd['codec']]
+         except KeyError:
+            mb_vat = None
+         else:
+            mb_vat = mb.add_track_vavi_vfw_c
       else:
+         mb_vat = mb.add_track
+         
+      if not (mb_vat is None):
          width = md['width']
          height = int(md['height'])
          if not (width is None):
             width = int(width)
          if not (height is None):
             height = int(height)
-         mb.add_track((t.get_framedata() for t in vd['data']), mcio_matroska.TRACKTYPE_VIDEO, vc_mkv, vd['init_data'], True,
+         mb_vat((t.get_framedata() for t in vd['data']), mcio_matroska.TRACKTYPE_VIDEO, vc_mkv, vd['init_data'], True,
             width, height)
          
       try:

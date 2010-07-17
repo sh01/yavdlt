@@ -944,6 +944,26 @@ class MatroskaFrame:
       se.append(MatroskaElementBlock_r.new(tracknum, self.tc-c_off, self.flags, keyframe, self.data_r))
       return MatroskaElementBlockGroup.new(se)
 
+
+class BitmapInfoHeader:
+   BFMT = '<lllhh4slllll'
+   BFMT_LEN = struct.calcsize(BFMT)
+   
+   def __init__(self, width, height, codec):
+      self.width = width
+      self.height = height
+      self.codec = FourCC(codec)
+      self.planes = 1
+      self.colour_depth = 0
+      self.x_ppm = 0
+      self.y_ppm = 0
+      self.get_bindata()
+   
+   def get_bindata(self):
+      return struct.pack(self.BFMT, self.BFMT_LEN, self.width, self.height, self.planes, self.colour_depth,
+         struct.pack('>L', self.codec), 0, self.x_ppm, self.y_ppm, 0, 0)
+         
+
 class MatroskaBuilder:
    settings_map = {
       TRACKTYPE_VIDEO: MatroskaElementVideo,
@@ -954,6 +974,7 @@ class MatroskaBuilder:
    TOFF_CLUSTER = 2**15
    #TLEN_CLUSTER = 2**15
    #TOFF_CLUSTER = 0
+   CODEC_AVI_VFW = 'V_MS/VFW/FOURCC'
    
    def __init__(self, write_app, tcs, dur, ts=None):
       self.ebml_hdr = EBMLHeader.new([
@@ -1114,6 +1135,16 @@ class MatroskaBuilder:
       te._make_cues = make_cues
       self.tracks.sub.append(te)
       return (track_num, te)
+   
+   def add_track_vavi_vfw_c(self, data, ttype, codec, codec_init_data, make_cues, width, height, *args, **kwargs):
+      """Add track in AVI/VFW compatibility mode."""
+      assert (ttype == TRACKTYPE_VIDEO)
+      bih = BitmapInfoHeader(width, height, codec)
+      cid2 = bih.get_bindata()
+      if not (codec_init_data is None):
+         cid2 += codec_init_data
+      
+      self.add_track(data, ttype, self.CODEC_AVI_VFW, cid2, make_cues, *args, height=height, width=width, **kwargs)
    
    def add_track(self, data, ttype, codec, codec_init_data, make_cues, *args, default_dur=None, **kwargs):
       """Add track to MKV structure."""
