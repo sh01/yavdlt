@@ -989,6 +989,9 @@ class MatroskaBuilder:
       TRACKTYPE_VIDEO: BitmapInfoHeader
    }
    
+   # Be bug-compatible with mplayer r1.0~rc3+svn20100502-4.4.4, at the cost of allocating the first cluster suboptimally.
+   bc_old_mplayer = True
+   
    ID2CODEC = {
       #video
       CODEC_ID_MPEG1: 'V_MPEG1',
@@ -1072,6 +1075,21 @@ class MatroskaBuilder:
          c_max = c._tc + 2**15-1
          c_min = c._tc - 2**15
          c.__blockcount = 0
+      
+      if (self.bc_old_mplayer):
+         # Older mplayer is a big baby about this, using the base timecode of the first cluster in a segment to set the
+         # beginning TC of said segment. Even for segments that start with the block with the lowest display time at the
+         # beginning of the first cluster, this will blow up if said cluster TC is set to allow for the maximum range, since
+         # this implies negative block timecodes for the first blocks in the cluster.
+         # This code works around that bug by aligning the base TC of the first cluster with the TC of our earliest frame, at
+         # the cost of leaving half of the possible timecodes in that cluster unusuable and therefore slightly increasing mkv
+         # file size on average.
+         try:
+            frame_tc_min = min(min(f.tc for f in frame_list) for frame_list in self.frames.values())
+         except ValueError:
+            pass
+         else:
+            add_cluster(-self.TOFF_CLUSTER+frame_tc_min)
       
       while (frames):
          (tn, tframes) = min(frames.items(), key=lambda x:x[1][0].tc)
