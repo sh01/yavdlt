@@ -549,7 +549,7 @@ class MovBoxMovie(MovBoxBranch):
          ts_fact = (ts_base / mdhd.time_scale)
          mcd = track._get_most_common_dur()
          mb.add_track(track.get_sample_data(elmult*ts_fact, mcd), ttype, mkv_codec, se.get_codec_init_data(),
-            not (track.ctts is None), default_dur=round(10**9*mcd/mdhd.time_scale), *at_args)
+            not (track.stts is None), default_dur=round(10**9*mcd/mdhd.time_scale), *at_args)
       
       return mb
 
