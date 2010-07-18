@@ -286,17 +286,10 @@ class YTVideoRef:
    
    logger = logging.getLogger('YTVideoRef')
    log = logger.log
-   fmt_exts = {
-       5: 'flv',
-       6: 'flv',
-      17: 'mp4',
-      18: 'mp4',
-      22: 'mp4',
-      34: 'flv',
-      35: 'flv',
-      37: 'mp4',
-      38: 'mp4',
-      FMT_DEFAULT: 'flv'
+   
+   MIME_EXT_MAP = {
+      'video/mp4': 'mp4',
+      'video/x-flv': 'flv'
    }
    
    fmts = (
@@ -323,7 +316,7 @@ class YTVideoRef:
       self.vid = vid
       self.tok = None
       self.fmt = fmt
-      self._fmt = None
+      self._mime_type = None
       self.fmt_url_map = {}
       self.force_fmt_url_map_use = False
       self.got_video_info = False
@@ -434,7 +427,7 @@ class YTVideoRef:
             mtitle += '_'
       
       if (ext is None):
-         ext = self.fmt_exts.get(self._fmt,'bin')
+         ext = self.MIME_EXT_MAP.get(self._mime_type,'bin')
       
       return 'yt_%s_%s.%s' % (self.vid, mtitle, ext)
    
@@ -454,7 +447,7 @@ class YTVideoRef:
       url = self.pick_video()
       if (url is None):
          raise StandardError('Unable to pick video fmt; bailing out.')
-      fn_out = self.choose_fn()
+      
       self.log(20, 'Fetching data from %r.' % (url,))
       
       req = urllib2.urlopen(url)
@@ -463,6 +456,8 @@ class YTVideoRef:
          cl = int(req.headers.get('content-length'))
       except (KeyError, ValueError, TypeError):
          cl = None
+      
+      fn_out = self.choose_fn()
       
       self.log(20, 'Total length is %d bytes.' % (cl,))
       
@@ -592,7 +587,7 @@ class YTVideoRef:
          
          if (rc == 200):
             self.log(20, 'Fmt %s is good ... using that.' % (fmt,))
-            self._fmt = fmt
+            self._mime_type = response.getheader('content-type', None)
             return url
          
          self.log(20, 'Tried to get video in fmt %s and failed (http response %r).' % (fmt, rc))
@@ -842,7 +837,7 @@ def main():
          vids_failed.append(vid)
          continue
       
-      fns = [ref.choose_fn(ext) for ext in ref.fmt_exts.values()]
+      fns = [ref.choose_fn(ext) for ext in ref.MIME_EXT_MAP.values()]
       for fn in fns:
          if (os.path.exists(fn)):
             vf_exists = True
