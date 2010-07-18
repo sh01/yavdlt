@@ -1000,6 +1000,7 @@ class MatroskaBuilder:
       CODEC_ID_MPEG4_10: 'V_MPEG4/ISO/AVC',
       CODEC_ID_SNOW: 'V_SNOW',
       CODEC_ID_THEORA: 'V_THEORA',
+      CODEC_ID_VP8: 'V_VP8',
       # audio
       CODEC_ID_AAC: 'A_AAC',
       CODEC_ID_AC3: 'A_AC3',

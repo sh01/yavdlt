@@ -47,6 +47,7 @@ def __init():
       'FLV1', # H263 variant: flash video
       'VP6',
       'VP6A',
+      'VP8',
       
       # audio codecs
       'AAC',
