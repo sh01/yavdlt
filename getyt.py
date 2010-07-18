@@ -307,8 +307,9 @@ class YTVideoRef:
       37,
       22,
       35,
-      18,
       34,
+      18,
+      5,
       FMT_DEFAULT
    )
 
