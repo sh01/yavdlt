@@ -289,7 +289,8 @@ class YTVideoRef:
    
    MIME_EXT_MAP = {
       'video/mp4': 'mp4',
-      'video/x-flv': 'flv'
+      'video/x-flv': 'flv',
+      'video/webm': 'webm'
    }
    
    fmts = (
