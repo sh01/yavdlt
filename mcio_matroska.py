@@ -574,9 +574,8 @@ class MatroskaElementSegment(MatroskaElementMaster):
       cue_track_set = set()
       for cp in self.get_sub_by_cls(MatroskaElementCues).sub:
          for ctp in cp.get_subl_by_cls(MatroskaElementCueTrackPositions):
-            tn = ctp.get_sub_by_cls(MatroskaElementCueTrack)
+            tn = ctp.get_subval_by_cls(MatroskaElementCueTrack)
             cue_track_set.add(tn)
-            
       
       for te in tracks:
          te_cp = deepcopy(te)
