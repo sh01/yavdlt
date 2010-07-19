@@ -50,13 +50,23 @@ class DataRefFile(DataRef):
 
 class DataRefBytes(DataRef, bytes):
    def __init__(self, *args, **kwargs):
-      return bytes.__init__(self)
+      bytes.__init__(self)
    
    def get_data(self):
       return self
       
    def get_size(self):
       return len(self)
+
+class DataRefMemoryView(DataRef):
+   def __init__(self, data):
+      self._data = data
+   
+   def get_data(self):
+      return self._data
+   
+   def get_size(self):
+      return len(self._data)
 
 
 class FourCC(int):

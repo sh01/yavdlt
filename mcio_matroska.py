@@ -26,6 +26,7 @@ import time
 from mcio_codecs import *
 from mcio_base import *
 
+
 class MatroskaBaseError(ContainerError):
    pass
 
@@ -45,6 +46,7 @@ def _calc_vint_size(i):
 class EBMLVInt(int):
    lt_sbit = (None,) + tuple(int(math.log(i,2)) for i in range(1,2**8-1))
    lt_prefix_reserved = tuple(not bool(math.log(i+1,2) % 1) for i in range(0,2**8))
+   SIGNED = False
    
    def __init__(self, x):
       self.size = _calc_vint_size(x)
@@ -75,31 +77,35 @@ class EBMLVInt(int):
    
    @classmethod
    def build_from_bindata(cls, bd):
+      bd = memoryview(bd)
       idx = 0
       l = 0
-      while (bd[idx] == 0):
+      while (bd[idx][0] == 0):
          l += 8
          idx += 1
       
-      sbits = cls.lt_sbit[bd[idx]]
-      prefix_val = bd[idx] & (2**sbits-1)
+      sbits = cls.lt_sbit[bd[idx][0]]
+      prefix_val = bd[idx][0] & (2**sbits-1)
       l += 7-sbits
       
       bid = bd[idx+1:l+1]
-      bd[idx+l]
+      bd[idx+l][0]
       
       # Test for reserved val
-      if ((cls.lt_prefix_reserved[bd[idx]]) and (bid == (b'\xFF'*l))):
+      if ((cls.lt_prefix_reserved[bd[idx][0]]) and (bid == (b'\xFF'*l))):
          raise EBMLError('Reserved int values are currently unimplemented.')
       
       # Can't reverse it directly, since it might be a memoryview object
       mult = 1
       ival = 0
       for i in reversed(range(len(bid))):
-         ival += bid[i]*mult
+         ival += bid[i][0]*mult
          mult <<= 8
       
       ival += prefix_val*mult
+      if (cls.SIGNED):
+         ival -= 2**(sbits+l*8-1)-1
+      
       return (cls(ival), l+1)
    
    @classmethod
@@ -117,15 +123,25 @@ class EBMLVInt(int):
          else:
             return rv
          bs *= 2
-         
+
+class EBMLSVInt(EBMLVInt):
+   SIGNED = True
+
 class MatroskaVInt(EBMLVInt):
    # This is a direct consequence of matroska vints being limited to 8 bytes total length.
-   val_lim = 2**56-1
-   
+   val_lim = 2**56-2
    def __init__(self, x):
       super().__init__(x)
-      if (x >= self.val_lim):
+      if (x > self.val_lim):
          raise MatroskaError('VInt val {0} outside of defined domain.'.format(x))
+
+class MatroskaSVInt(EBMLSVInt):
+   val_lim = 2**48-1
+   def __init__(self, x):
+      super().__init__(x)
+      if not (-1*self.val_lim <= x <= self.val_lim):
+         raise MatroskaError('SVInt val {0} outside of defined domain.'.format(x))
+
 
 class EBMLElement:
    cls_map = {}
@@ -190,8 +206,17 @@ class EBMLElement:
          raise EBMLError('Element size / filesize mismatch.')
       return rv
 
+def _cls_default_set(cls):
+   try:
+      default_val = cls.default
+   except AttributeError:
+      cls.default = None
+   else:
+      cls.default = cls(cls.type, default_val)
+
 def _ebml_type_reg(cls):
    EBMLElement.cls_map[cls.type] = cls
+   _cls_default_set(cls)
    return cls
 
 class MatroskaElement(EBMLElement):
@@ -216,6 +241,7 @@ class MatroskaElement(EBMLElement):
 
 def _mkv_type_reg(cls):
    MatroskaElement.cls_map_m[cls.type] = cls
+   _cls_default_set(cls)
    return cls
 
 
@@ -224,6 +250,10 @@ class MatroskaElementMaster(MatroskaElement):
    def __init__(self, etype, sub):
       super().__init__(etype)
       self.sub = sub
+
+   @property
+   def val(self):
+      return self.sub
 
    def write_to_file(self, c):
       self._write_header(c, MatroskaVInt(sum(e.get_size() for e in self.sub)))
@@ -238,6 +268,16 @@ class MatroskaElementMaster(MatroskaElement):
       for e in self.sub:
          if (isinstance(e, cls)):
             return e
+   
+   def get_subl_by_cls(self, cls):
+      for e in self.sub:
+         if (isinstance(e, cls)):
+            yield e      
+   
+   def get_subval_by_cls(self, cls):
+      for e in self.sub:
+         if (isinstance(e, cls)):
+            return e.val
 
    @classmethod
    def _build_from_file(cls, etype, body_size, f):
@@ -253,7 +293,11 @@ class MatroskaElementBinary(MatroskaElement):
    def __init__(self, etype, data_r):
       super().__init__(etype)
       self.data_r = data_r
-   
+
+   @property
+   def val(self):
+      return self.data_r
+
    def __format__(self, fs):
       return '<{0} {1}>'.format(self.__class__.__name__, self.data_r)
 
@@ -364,7 +408,7 @@ class MatroskaElementSInt(MatroskaElementBaseNum):
       buf[:pad_sz] = b'\xFF'*pad_sz
 
 class MatroskaElementFloat(MatroskaElementBaseNum):
-   def __init__(self, etype, val, body_size):
+   def __init__(self, etype, val, body_size=8):
       super().__init__(etype, val, body_size)
       float(val)
       self.bfmt = self._get_bfmt(body_size)
@@ -449,6 +493,62 @@ class MatroskaElementSignatureSlot(MatroskaElementMaster):
 @_mkv_type_reg
 class MatroskaElementSegment(MatroskaElementMaster):
    type = EBMLVInt(139690087)
+   def _iter_frames(self, tn, default_dur):
+      for c in self.get_subl_by_cls(MatroskaElementCluster):
+         tc = c.get_subval_by_cls(MatroskaElementTimecode)
+         for bc in c.get_subl_by_cls((MatroskaElementSimpleBlock, MatroskaElementBlockGroup)):
+            block = bc.get_block()
+            (btn, btc, lacing, frame_count, hdrlen) = block._get_hd()
+            if (btn != tn):
+               continue
+            
+            dur = bc.get_dur()
+            if not (dur is None):
+               dur = round(dur/frame_count)
+            else:
+               dur = default_dur
+            
+            is_kf = bc.is_keyframe()
+            ftc_delta = 0
+            ftc = tc + btc
+            for frame_data in block:
+               ftc += ftc_delta
+               yield(ftc, dur, frame_data, is_kf)
+               ftc_delta = dur
+      
+   def make_mkvb(self, write_app):
+      info = self.get_sub_by_cls(MatroskaElementInfo)
+      
+      tcs = info.get_subval_by_cls(MatroskaElementTimecodeScale)
+      dur = info.get_subval_by_cls(MatroskaElementDuration)
+      mb = MatroskaBuilder(write_app, tcs, dur)
+      
+      track_c = self.get_sub_by_cls(MatroskaElementTracks)
+      
+      tracks = list(track_c.sub)
+      tracks.sort(key=lambda t:t.get_subval_by_cls(MatroskaElementTrackNumber))
+      
+      for te in tracks:
+         tn = te.get_subval_by_cls(MatroskaElementTrackNumber)
+         tt = te.get_subval_by_cls(MatroskaElementTrackType)
+         default_dur = te.get_subval_by_cls(MatroskaElementDefaultDuration)
+         name = te.get_subval_by_cls(MatroskaElementName)
+         
+         codec_mkv = MatroskaCodec(te.get_subval_by_cls(MatroskaElementCodec))
+         cpriv = te.get_subval_by_cls(MatroskaElementCodecPrivate)
+         
+         if (tt == TRACKTYPE_AUDIO):
+            ci = te.get_sub_by_cls(MatroskaElementAudio)
+            at_args = (ci.get_subval_by_cls(MatroskaElementSamplingFrequency), ci.get_subval_by_cls(MatroskaElementChannels))
+         elif (tt == TRACKTYPE_VIDEO):
+            ci = te.get_sub_by_cls(MatroskaElementVideo)
+            at_args = (ci.get_subval_by_cls(MatroskaElementPixelWidth), ci.get_subval_by_cls(MatroskaElementPixelHeight))
+         
+         mb.add_track(self._iter_frames(tn, default_dur), tt, codec_mkv, cpriv, (tt == TRACKTYPE_VIDEO), *at_args, default_dur=default_dur, track_name=name)
+      
+      return mb
+         
+   
    def write_to_file(self, c):
       self._write_header(c, MatroskaVInt(sum(e.get_size() for e in self.sub)))
       c.seg_off = c.f.seek(0,2)
@@ -495,7 +595,15 @@ class MatroskaElementSilentTracks(MatroskaElementMaster):
 
 @_mkv_type_reg
 class MatroskaElementBlockGroup(MatroskaElementMaster):
-   type = EBMLVInt(32)
+   type = EBMLVInt(32)   
+   def get_block(self):
+      return self.get_sub_by_cls(MatroskaElementBlock)
+   
+   def get_dur(self):
+      return self.get_subval_by_cls(MatroskaElementBlockDuration)
+   
+   def is_keyframe(self):
+      return (self.get_sub_by_cls(MatroskaElementReferenceBlock) is None)
 
 @_mkv_type_reg
 class MatroskaElementBlockAdditions(MatroskaElementMaster):
@@ -685,14 +793,87 @@ class MatroskaElementVoid(MatroskaElementBinary):
 class MatroskaElementSegmentUID(MatroskaElementBinary):
    type = EBMLVInt(13220)
 
+class MatroskaElementBlockBase(MatroskaElementBinary):
+   type = EBMLVInt(33)
+   def _get_hd(self):
+      data = self.data_r.get_data()
+      (tn,off) = MatroskaVInt.build_from_bindata(data)
+      (tc,flags) = struct.unpack('>hB', data[off:off+3])
+      lacing = (flags >> 1) & 3
+      off += 3
+      if (lacing == 0):
+         return (tn, tc, lacing, 1, off)
+      
+      frame_count = struct.unpack('>B', data[off:off+1])[0] + 1
+      off += 1
+      return (tn, tc, lacing, frame_count, off)
+   
+   def __iter__(self):
+      data = memoryview(self.data_r.get_data())
+      (tn, tc, lacing, frame_count, off) = self._get_hd()
+      ldata = len(data)
+      
+      if (lacing == 0):
+         yield DataRefMemoryView(data[off:])
+         return
+      
+      elif (lacing == 1):
+         frame_lengths = [None]*(frame_count-1)
+         
+         for i in range(frame_count-1):
+            (frame_length,) = (inc,) = struct.unpack('>B', data[off:off+1])
+            off += 1
+            while (inc == 255):
+               (inc,) = struct.unpack('>B', data[off:off+1])
+               frame_length += inc
+               off += 1
+            frame_lengths[i] = frame_length
+      
+      elif (lacing == 2):
+         body_len = ldata-off
+         frame_len = body_len//frame_count
+         if (frame_len != body_len/frame_count):
+            raise MatroskaError('Bogus fixed size lacing: {0} frames in {1} bytes.'.format(frame_count, ldata))
+         frame_lengths = [frame_len]*(frame_count-1)
+
+      else: # lacing == 3
+         frame_lengths = [None]*(frame_count-1)
+         (frame_lengths[0],off_i) = MatroskaVInt.build_from_bindata(data[off:])
+         off += off_i
+         
+         for i in range(frame_count-2):
+            (sval, off_i) = MatroskaSVInt.build_from_bindata(data[off:])
+            frame_lengths[i+1] = sval + frame_lengths[i]
+            off += off_i
+
+      if (sum(frame_lengths,0) + off > len(data)):
+         raise MatroskaError('Bogus lacing: {0} bytes header, and alleged frame size list {1} in {2} bytes.'.format(off, frame_lengths, len(data)))
+
+      for frame_len in frame_lengths:
+         yield DataRefMemoryView(data[off:off+frame_len])
+         off += frame_len
+      yield DataRefMemoryView(data[off:])
+        
+
 @_mkv_type_reg
-class MatroskaElementBlock(MatroskaElementBinary):
+class MatroskaElementBlock(MatroskaElementBlockBase):
    type = EBMLVInt(33)
 
 @_mkv_type_reg
-class MatroskaElementSimpleBlock(MatroskaElementBinary):
+class MatroskaElementSimpleBlock(MatroskaElementBlockBase):
    type = EBMLVInt(35)
+   def get_block(self):
+      return self
+   
+   def get_dur(self):
+      return None
+      
+   def is_keyframe(self):
+      data = self.data_r.get_data()
+      off = MatroskaVInt.build_from_bindata(data)[1]
+      return bool(data[off+2] >> 7)
 
+@_mkv_type_reg
 class MatroskaElementCodecPrivate(MatroskaElementBinary):
    type = EBMLVInt(9122)
 
@@ -794,6 +975,7 @@ class MatroskaElementCueBlockNumber(MatroskaElementUInt):
 
 @_mkv_type_reg
 class MatroskaElementTimecodeScale(MatroskaElementUInt):
+   default = 1000000
    type = EBMLVInt(710577)
 
 @_mkv_type_reg
@@ -833,6 +1015,7 @@ class MatroskaElementPixelHeight(MatroskaElementUInt):
 
 @_mkv_type_reg
 class MatroskaElementChannels(MatroskaElementUInt):
+   default = 1
    type = EBMLVInt(31)
 
 @_mkv_type_reg
@@ -865,6 +1048,7 @@ class MatroskaElementDuration(MatroskaElementFloat):
 
 @_mkv_type_reg
 class MatroskaElementSamplingFrequency(MatroskaElementFloat):
+   default = 8000
    type = EBMLVInt(53)
 
 @_mkv_type_reg
@@ -887,6 +1071,10 @@ class EBMLElementDocType(MatroskaElementStringASCII):
 @_mkv_type_reg
 class MatroskaElementMuxingApp(MatroskaElementStringASCII):
    type = EBMLVInt(3456)
+
+@_mkv_type_reg
+class MatroskaElementName(MatroskaElementStringASCII):
+   type = EBMLVInt(4974)
 
 @_mkv_type_reg
 class MatroskaElementWritingApp(MatroskaElementStringASCII):
@@ -915,6 +1103,33 @@ class MatroskaElementFileMimeType(MatroskaElementStringASCII):
 # ---------------------------------------------------------------- File construction
 def _make_random_uid():
    return struct.pack('>QQ', random.getrandbits(64), random.getrandbits(64))
+
+class MatroskaCodec(str):
+   CODEC_ID2MKV = {
+      #video
+      CODEC_ID_MPEG1: 'V_MPEG1',
+      CODEC_ID_MPEG2: 'V_MPEG2',
+      CODEC_ID_MPEG4_2: 'V_MPEG4/ISO/ASP',
+      CODEC_ID_MPEG4_10: 'V_MPEG4/ISO/AVC',
+      CODEC_ID_SNOW: 'V_SNOW',
+      CODEC_ID_THEORA: 'V_THEORA',
+      CODEC_ID_VP8: 'V_VP8',
+      # audio
+      CODEC_ID_AAC: 'A_AAC',
+      CODEC_ID_AC3: 'A_AC3',
+      CODEC_ID_DTS: 'A_DTS',
+      CODEC_ID_FLAC: 'A_FLAC',
+      CODEC_ID_MP1: 'A_MPEG/L1',
+      CODEC_ID_MP2: 'A_MPEG/L2',
+      CODEC_ID_MP3: 'A_MPEG/L3',
+      CODEC_ID_VORBIS: 'A_VORBIS',
+      # pseudo codecs
+      CODEC_ID_MKV_MSC_VFW: 'V_MS/VFW/FOURCC',
+      CODEC_ID_MKV_MSC_ACM: 'A_MS/ACM'
+   }
+   @classmethod
+   def build_from_id(cls, codec_id):
+      return cls(cls.CODEC_ID2MKV[codec_id])
 
 class _OutputCtx:
    def __init__(self, f):
@@ -991,29 +1206,6 @@ class MatroskaBuilder:
    
    # Be bug-compatible with mplayer r1.0~rc3+svn20100502-4.4.4, at the cost of allocating the first cluster suboptimally.
    bc_old_mplayer = True
-   
-   ID2CODEC = {
-      #video
-      CODEC_ID_MPEG1: 'V_MPEG1',
-      CODEC_ID_MPEG2: 'V_MPEG2',
-      CODEC_ID_MPEG4_2: 'V_MPEG4/ISO/ASP',
-      CODEC_ID_MPEG4_10: 'V_MPEG4/ISO/AVC',
-      CODEC_ID_SNOW: 'V_SNOW',
-      CODEC_ID_THEORA: 'V_THEORA',
-      CODEC_ID_VP8: 'V_VP8',
-      # audio
-      CODEC_ID_AAC: 'A_AAC',
-      CODEC_ID_AC3: 'A_AC3',
-      CODEC_ID_DTS: 'A_DTS',
-      CODEC_ID_FLAC: 'A_FLAC',
-      CODEC_ID_MP1: 'A_MPEG/L1',
-      CODEC_ID_MP2: 'A_MPEG/L2',
-      CODEC_ID_MP3: 'A_MPEG/L3',
-      CODEC_ID_VORBIS: 'A_VORBIS',
-      # pseudo codecs
-      CODEC_ID_MKV_MSC_VFW: 'V_MS/VFW/FOURCC',
-      CODEC_ID_MKV_MSC_ACM: 'A_MS/ACM'
-   }
    
    MS_CM_NEVER = 0
    MS_CM_AUTO = 1
@@ -1169,18 +1361,23 @@ class MatroskaBuilder:
       tcs = round(10**9/sdiv/elmult)
       return (tcs, elmult, get_error(elmult))
 
-   def _build_track(self, ttype, codec_id, cid, default_dur, make_cues, ms_cm, *args, **kwargs):
+   def _build_track(self, ttype, codec, cid, default_dur, make_cues, ms_cm, track_name, *args, **kwargs):
       """Build MatroskaElementTrackEntry structure and add to tracks."""
       track_num = len(self.tracks.sub) + 1
       
       try_ms_cm = (ms_cm == self.MS_CM_FORCE)
-      if not (try_ms_cm):
+      if (isinstance(codec, MatroskaCodec)):
+         if (try_ms_cm):
+            raise ContainerCodecError("Raw matroska codec specification conflicts with ms_cm==MS_CM_FORCE.")
+         mkv_codec = codec
+      
+      elif not (try_ms_cm):
          try:
-            mkv_codec = self.ID2CODEC[codec_id]
+            mkv_codec = MatroskaCodec.build_from_id(codec)
          except KeyError as exc:
             if not (ms_cm):
-               raise ContainerCodecError("Can't natively encapsulate {0} data into MKV, and wasn't supposed to try MS compatibility mode.".format(codec_id)) from exc
-               
+               raise ContainerCodecError("Can't natively encapsulate {0} data into MKV, and wasn't supposed to try MS compatibility mode.".format(codec)) from exc
+            
             try_ms_cm = True
       
       if (try_ms_cm):
@@ -1189,14 +1386,13 @@ class MatroskaBuilder:
          except KeyError as exc:
             raise ContainerCodecError("MS compatibility mode for track type {0} is currently not supported.")
          
-         ms_header = ms_cm_cls(codec_id, *args, **kwargs)
+         ms_header = ms_cm_cls(codec, *args, **kwargs)
          cid2 = ms_header.get_bindata()
          if not (cid is None):
             cid2 += cid
          cid = cid2
          
-         codec_id = ms_cm_cls.WRAP_CODEC_ID
-         mkv_codec = self.ID2CODEC[codec_id]
+         mkv_codec = CODEC_ID2MKV[ms_cm_cls.WRAP_CODEC_ID]
       
       sub_els = [
          MatroskaElementTrackNumber.new(track_num),
@@ -1210,6 +1406,9 @@ class MatroskaBuilder:
       if not (default_dur is None):
          sub_els.append(MatroskaElementDefaultDuration.new(default_dur))
       
+      if not (track_name is None):
+         sub_els.append(MatroskaElementName.new(track_name))
+      
       if (ttype in self.settings_map):
          settings_cls = self.settings_map[ttype]
          sub_els.append(settings_cls.new(*args, **kwargs))
@@ -1220,9 +1419,9 @@ class MatroskaBuilder:
       return (track_num, te)
    
    def add_track(self, data, ttype, codec, codec_init_data, make_cues, *args, default_dur=None, ms_cm=MS_CM_AUTO,
-         **kwargs):
+         track_name=None, **kwargs):
       """Add track to MKV structure."""
-      (track_num, track_entry) = self._build_track(ttype, codec, codec_init_data, default_dur, make_cues, ms_cm, *args, **kwargs)
+      (track_num, track_entry) = self._build_track(ttype, codec, codec_init_data, default_dur, make_cues, ms_cm, track_name, *args, **kwargs)
       tv_prev = None
       for (tv, dur, data_r, is_keyframe) in data:
          if ((is_keyframe) or (tv_prev is None)):
@@ -1280,7 +1479,7 @@ def _dump_elements(seq, depth=0):
       if (hasattr(element, 'sub') and (not isinstance(element, (
             MatroskaElementSeekHead,
             MatroskaElementCluster,
-            #MatroskaElementCues
+            MatroskaElementCues
          )))):
             _dump_elements(element.sub, depth+1)
 
@@ -1298,7 +1497,15 @@ def _main():
    f = open(fn, 'rb')
    els = MatroskaElement.build_seq_from_file(f)
    _dump_elements(els)
-
+   for el in els:
+      if (isinstance(el, MatroskaElementSegment)):
+         break
+   else:
+      return
+   
+   mb = el.make_mkvb('mcio_matroska self-test code, pre-versioning version')
+   mb.write_to_file(open(b'__mkvdump.mkv.tmp', 'wb'))
+   
 
 if (__name__ == '__main__'):
    _main()
