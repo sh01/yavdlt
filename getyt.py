@@ -788,9 +788,11 @@ def make_urlmangler_phpproxy_base64(name, baseurl):
       return ''.join((baseurl, '/index.php?q=', base64.encodestring(url).replace('\n','')))
    return url_mangle
 
+make_urlmangler_phpproxy_base64('kwcz', 'http://www.kowalczuk.info/')
+#make_urlmangler_phpproxy_base64('ubsc', 'http://unblock-blocked-sites.com')
+#make_urlmangler_phpproxy_base64('wpbc', 'http://webproxybrowser.com')
 
-make_urlmangler_phpproxy_base64('ubsc', 'http://unblock-blocked-sites.com')
-make_urlmangler_phpproxy_base64('wpbc', 'http://webproxybrowser.com')
+
 
 def main():
    import optparse
