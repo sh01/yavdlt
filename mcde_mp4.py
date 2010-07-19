@@ -707,6 +707,10 @@ class MovBoxMeta(MovFullBoxBranch):
    type = FourCC(b'meta')
 
 @_mov_box_type_reg
+class MovBoxMeta(MovBoxBranch):
+   type = FourCC(b'ilst')
+
+@_mov_box_type_reg
 class MovBoxHandlerReference(MovFullBox):
    type = FourCC(b'hdlr')
    bfmt = '>LL12x'
