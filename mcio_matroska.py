@@ -580,8 +580,13 @@ class MatroskaElementSegment(MatroskaElementMaster):
          te_cp = deepcopy(te)
          tn = te.get_subval_by_cls(MatroskaElementTrackNumber)
          default_dur = te.get_subval_by_cls(MatroskaElementDefaultDuration)
+         if (default_dur is None):
+            sdd = None
+         else:
+            sdd = round(default_dur/tcs)
          
-         mb.add_track_by_entry(self._iter_frames(tn, default_dur), te_cp, make_cues=(tn in cue_track_set))
+         
+         mb.add_track_by_entry(self._iter_frames(tn, sdd), te_cp, make_cues=(tn in cue_track_set))
       
       return mb
          
