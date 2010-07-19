@@ -563,9 +563,8 @@ class MatroskaElementSegment(MatroskaElementMaster):
       info = self.get_sub_by_cls(MatroskaElementInfo)
       
       tcs = info.get_subval_by_cls(MatroskaElementTimecodeScale)
-      dur = info.get_subval_by_cls(MatroskaElementDuration)
+      dur = info.get_subval_by_cls(MatroskaElementDuration)*tcs/10**9
       mb = MatroskaBuilder(write_app, tcs, dur)
-      
       track_c = self.get_sub_by_cls(MatroskaElementTracks)
       
       tracks = list(track_c.sub)
