@@ -17,6 +17,7 @@
 
 # Media container I/O: Matroska format
 
+from copy import deepcopy
 import datetime
 import math
 import random
@@ -111,7 +112,7 @@ class EBMLVInt(int):
    @classmethod
    def build_from_file(cls, f):
       bs = 8
-      off = f.seek(0,1)
+      off = f.tell()
       while (True):
          data = f.read(bs)
          f.seek(off)
@@ -165,19 +166,15 @@ class EBMLElement:
    @classmethod
    def _etype2cls(cls, etype):
       try:
-         cls = cls.cls_map[etype]
+         rv = cls.cls_map[etype]
       except KeyError:
-         pass
-      return cls
-   
-   @classmethod
-   def _build_from_file(cls, etype, body_size, f):
-      return cls(etype)
+         rv = cls.cls_build_default
+      return rv
    
    @classmethod
    def build_from_file(cls, f):
       bufsize = 8
-      off = f.seek(0,1)
+      off = f.tell()
       (etype, sz_et) = cls.vint_type.build_from_file(f)
       off += sz_et
       f.seek(off)
@@ -189,7 +186,7 @@ class EBMLElement:
 
    @classmethod
    def build_seq_from_file(cls, f, size_lim=None):
-      off = f.seek(0,1)
+      off = f.tell()
       rv = []
       if (size_lim is None):
          off_lim = f.seek(0,2)
@@ -205,6 +202,28 @@ class EBMLElement:
       if (off != off_lim):
          raise EBMLError('Element size / filesize mismatch.')
       return rv
+
+class EBMLElementUnknown(EBMLElement):
+   def __init__(self, etype, size, f):
+      super().__init__(etype)
+      self.data_r = DataRefFile(f, f.tell(), size)
+   
+   def __deepcopy__(self, mdict):
+      self.data_r.f.seek(self.data_r.off)
+      return type(self)(self.type, self.data_r.size, self.data_r.f)
+
+   def get_size(self):
+      bd_size = MatroskaVInt(self.data_r.size)
+      return (self.type.size + bd_size.size + bd_size)
+
+   @classmethod
+   def _build_from_file(cls, *args, **kwargs):
+      return cls(*args, **kwargs)
+
+   def write_to_file(self, c):
+      self._write_header(c, self.data_r.size)
+      c.f.write(self.data_r.get_data())
+EBMLElement.cls_build_default = EBMLElementUnknown
 
 def _cls_default_set(cls):
    try:
@@ -230,13 +249,13 @@ class MatroskaElement(EBMLElement):
    @classmethod
    def _etype2cls(cls, etype):
       try:
-         cls = cls.cls_map[etype]
+         rv = cls.cls_map[etype]
       except KeyError:
          try:
-            cls = cls.cls_map_m[etype]
+            rv = cls.cls_map_m[etype]
          except KeyError:
-            pass
-      return cls
+            rv = cls.cls_build_default
+      return rv
 
 
 def _mkv_type_reg(cls):
@@ -250,6 +269,9 @@ class MatroskaElementMaster(MatroskaElement):
    def __init__(self, etype, sub):
       super().__init__(etype)
       self.sub = sub
+
+   def __deepcopy__(self, mdict):
+      return type(self)(self.type, deepcopy(self.sub,mdict))
 
    @property
    def val(self):
@@ -268,6 +290,15 @@ class MatroskaElementMaster(MatroskaElement):
       for e in self.sub:
          if (isinstance(e, cls)):
             return e
+   
+   def set_sub(self, new_e):
+      for i in range(len(self.sub)):
+         e = self.sub[i]
+         if (e.type == new_e.type):
+            self.sub[i] = new_e
+            break
+      else:
+         self.sub.append(new_e)
    
    def get_subl_by_cls(self, cls):
       for e in self.sub:
@@ -293,6 +324,9 @@ class MatroskaElementBinary(MatroskaElement):
    def __init__(self, etype, data_r):
       super().__init__(etype)
       self.data_r = data_r
+
+   def __deepcopy__(self, mdict):
+      return type(self)(self.type, self.data_r)
 
    @property
    def val(self):
@@ -322,7 +356,7 @@ class MatroskaElementBinary(MatroskaElement):
 
    @classmethod
    def _build_from_file(cls, etype, body_size, f):
-      data_r = DataRefFile(f, f.seek(0,1), body_size)
+      data_r = DataRefFile(f, f.tell(), body_size)
       return cls(etype, data_r)
 
 
@@ -331,6 +365,9 @@ class MatroskaElementBaseNum(MatroskaElement):
    def __init__(self, etype, val, body_size=None):
       super().__init__(etype)
       self.val = val
+
+   def __deepcopy__(self, mdict):
+      return type(self)(self.type, deepcopy(self.val,mdict), self._get_body_size())
 
    def write_to_file(self, c, _val=None):
       if (_val is None):
@@ -430,6 +467,9 @@ class MatroskaElementDate(MatroskaElementSInt):
    ut_td = (datetime.datetime(1970,1,1) - datetime.datetime(2001,1,1))
    ut_offset = (ut_td.days*86400 + ut_td.seconds)
    del(ut_td)
+   def __deepcopy__(self, mdict):
+      return self.new(deepcopy(self._val,mdict))
+   
    @property
    def val(self):
       rv = self._val + self.ut_offset
@@ -456,6 +496,9 @@ class MatroskaElementStringBase(MatroskaElement):
    def __init__(self, etype, val):
       super().__init__(etype)
       self.val = val
+
+   def __deepcopy__(self, mdict):
+      return type(self)(self.type, deepcopy(self.val,mdict))
 
    def write_to_file(self, c):
       body_data = self.val.encode(self.codec)
@@ -528,23 +571,19 @@ class MatroskaElementSegment(MatroskaElementMaster):
       tracks = list(track_c.sub)
       tracks.sort(key=lambda t:t.get_subval_by_cls(MatroskaElementTrackNumber))
       
+      cue_track_set = set()
+      for cp in self.get_sub_by_cls(MatroskaElementCues).sub:
+         for ctp in cp.get_subl_by_cls(MatroskaElementCueTrackPositions):
+            tn = ctp.get_sub_by_cls(MatroskaElementCueTrack)
+            cue_track_set.add(tn)
+            
+      
       for te in tracks:
+         te_cp = deepcopy(te)
          tn = te.get_subval_by_cls(MatroskaElementTrackNumber)
-         tt = te.get_subval_by_cls(MatroskaElementTrackType)
          default_dur = te.get_subval_by_cls(MatroskaElementDefaultDuration)
-         name = te.get_subval_by_cls(MatroskaElementName)
          
-         codec_mkv = MatroskaCodec(te.get_subval_by_cls(MatroskaElementCodec))
-         cpriv = te.get_subval_by_cls(MatroskaElementCodecPrivate)
-         
-         if (tt == TRACKTYPE_AUDIO):
-            ci = te.get_sub_by_cls(MatroskaElementAudio)
-            at_args = (ci.get_subval_by_cls(MatroskaElementSamplingFrequency), ci.get_subval_by_cls(MatroskaElementChannels))
-         elif (tt == TRACKTYPE_VIDEO):
-            ci = te.get_sub_by_cls(MatroskaElementVideo)
-            at_args = (ci.get_subval_by_cls(MatroskaElementPixelWidth), ci.get_subval_by_cls(MatroskaElementPixelHeight))
-         
-         mb.add_track(self._iter_frames(tn, default_dur), tt, codec_mkv, cpriv, (tt == TRACKTYPE_VIDEO), *at_args, default_dur=default_dur, track_name=name)
+         mb.add_track_by_entry(self._iter_frames(tn, default_dur), te_cp, make_cues=(tn in cue_track_set))
       
       return mb
          
@@ -1418,10 +1457,7 @@ class MatroskaBuilder:
       self.tracks.sub.append(te)
       return (track_num, te)
    
-   def add_track(self, data, ttype, codec, codec_init_data, make_cues, *args, default_dur=None, ms_cm=MS_CM_AUTO,
-         track_name=None, **kwargs):
-      """Add track to MKV structure."""
-      (track_num, track_entry) = self._build_track(ttype, codec, codec_init_data, default_dur, make_cues, ms_cm, track_name, *args, **kwargs)
+   def _add_track_data(self, track_num, data):
       tv_prev = None
       for (tv, dur, data_r, is_keyframe) in data:
          if ((is_keyframe) or (tv_prev is None)):
@@ -1431,6 +1467,24 @@ class MatroskaBuilder:
          
          frame = self._add_frame(track_num, tv, 0, tc_dependencies, data_r, dur)
          tv_prev = tv
+   
+   def add_track_by_entry(self, data, te, make_cues):
+      """Add track specified by existing MatroskaElementTrackEntry to MKV structure.
+      
+         Note that the track number element of te - if present already - will be overwritten."""
+      track_num = len(self.tracks.sub) + 1
+      
+      te.set_sub(MatroskaElementTrackNumber.new(track_num))
+      te._make_cues = make_cues
+      
+      self.tracks.sub.append(te)
+      self._add_track_data(track_num, data)
+   
+   def add_track(self, data, ttype, codec, codec_init_data, make_cues, *args, default_dur=None, ms_cm=MS_CM_AUTO,
+         track_name=None, **kwargs):
+      """Add track to MKV structure."""
+      (track_num, track_entry) = self._build_track(ttype, codec, codec_init_data, default_dur, make_cues, ms_cm, track_name, *args, **kwargs)
+      self._add_track_data(track_num, data)
    
    def sort_tracks(self):
       """Sort our tracks by type number, updating any block references."""
