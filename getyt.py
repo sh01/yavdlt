@@ -395,7 +395,7 @@ class YTVideoRef:
          if (m_err is None):
             m_err = self.re_err_age.search(content)
             if (m_err is None):
-               raise StandardError("YT markup failed to match expectations; can't extract video token.")
+               raise YTError("YT markup failed to match expectations; can't extract video token.")
             error_cls = YTLoginRequired
          else:
             error_cls = YTError
@@ -448,37 +448,75 @@ class YTVideoRef:
       
       url = self.pick_video()
       if (url is None):
-         raise StandardError('Unable to pick video fmt; bailing out.')
-      
-      self.log(20, 'Fetching data from %r.' % (url,))
-      
-      req = urllib2.urlopen(url)
-      
-      try:
-         cl = int(req.headers.get('content-length'))
-      except (KeyError, ValueError, TypeError):
-         cl = None
+         raise YTError('Unable to pick video fmt; bailing out.')
       
       fn_out = self.choose_fn()
-      
-      self.log(20, 'Total length is %d bytes.' % (cl,))
-      
-      content_fragments = []
-      cl_g = 0
-      
       try:
          f = file(fn_out, 'r+b')
       except IOError:
          f = file(fn_out, 'w+b')
       
+      f.seek(0,2)
+      flen = f.tell()
+      if (flen > self._content_length):
+         raise YTError('Existing local file longer than remote version; not attempting to retrieve.')
+      elif (flen == self._content_length):
+         self.log(20, 'Local file {0!r} appears to be complete already.'.format(fn_out, url))
+         return
+         
+      self.log(20, 'Fetching data from {0!r}.'.format(url))
+      
+      plen = 128
+      off_start = max(flen - plen, 0)
+      req_headers = {}
+      if (off_start > 0):
+         f.seek(off_start)
+         prefix_data = f.read()
+         if (len(prefix_data) != plen):
+            raise YTError('Target file appears ot have changed size from under us; bailing out.')
+         req_headers['Range'] = 'bytes={0}-'.format(off_start)
+      else:
+         prefix_data = None
+      
+      req = urllib2.Request(url, headers=req_headers)
+      res = urllib2.urlopen(req)
+      
+      if (off_start and (res.code != 206)):
+         raise YTError('Download resume failed; got unexpected HTTP response code {0}.'.format(res.code))
+      
+      cl = self._content_length
+      
+      try:
+         cl_r = int(res.headers.get('content-length'))
+      except (KeyError, ValueError, TypeError):
+         pass
+      else:
+         if (cl_r != cl-off_start):
+            raise YTError('Content length mismatch.')
+      
+      self.log(20, 'Total length is {0} bytes.'.format(cl))
+      
+      cl_g = off_start
+      if (prefix_data):
+         data = res.read(len(prefix_data))
+         if (len(data) != len(prefix_data)):
+            raise YTError("Download resume failed; premature content body cutoff.")
+         if (data != prefix_data):
+            raise YTError("Download resume failed; mismatch with existing tail data.")
+      
+         cl_g += len(prefix_data)
+         self.log(15, 'Beginning of remote file matches existing data; resuming download.')
+      
       while (True):
-         data_read = req.read(1024*1024)
-         content_fragments.append(data_read)
+         data_read = res.read(1024*1024)
          if (len(data_read) == 0):
             break
          cl_g += len(data_read)
-         self.log(15, 'Progress: %d (%.2f%%)' % (cl_g, float(cl_g)/cl*100))
+         self.log(15, 'Progress: {0} ({1:.2f}%)'.format(cl_g, float(cl_g)/cl*100))
          f.write(data_read)
+      
+      if (cl_g != self._content_length):
+         raise YTError("Prematurely lost DL connection; expected {0} bytes, got {1}.".format(self._content_length, cl_g))
       
       f.truncate()
       f.close()
@@ -588,9 +626,13 @@ class YTVideoRef:
                url = response.getheader('location')
          
          if (rc == 200):
-            self.log(20, 'Fmt %s is good ... using that.' % (fmt,))
-            self._mime_type = response.getheader('content-type', None)
-            return url
+            mime_type = response.getheader('content-type', None)
+            content_length = int(response.getheader('content-length', None))
+            if not (content_length is None):
+               self.log(20, 'Fmt %s is good ... using that.' % (fmt,))
+               self._mime_type = mime_type
+               self._content_length = content_length
+               return url
          
          self.log(20, 'Tried to get video in fmt %s and failed (http response %r).' % (fmt, rc))
          
@@ -769,7 +811,6 @@ def main():
    
    op = optparse.OptionParser(usage="%prog [options] <yt video id>*")
    op.add_option('-d', '--data-type', dest='dtype', default=''.join(dt_map.keys()), help='Data types to download')
-   op.add_option('--clobber', default=False, action='store_true', help='Refetch videos and overwrite existing video files')
    op.add_option('--fmt', default=None, help="YT format number to use.")
    op.add_option('--hd', default=False, action='store_true', help='Optimize for quality; get highest-resolution files available.')
    op.add_option('--playlist', default=None, help='Parse (additional) video ids from specified playlist', metavar='PLAYLIST_ID')
@@ -837,19 +878,7 @@ def main():
       except YTError:
          log(30, 'Failed to retrieve video %r:' % (vid,), exc_info=True)
          vids_failed.append(vid)
-         continue
-      
-      fns = [ref.choose_fn(ext) for ext in ref.MIME_EXT_MAP.values()]
-      for fn in fns:
-         if (os.path.exists(fn)):
-            vf_exists = True
-            break
-      else:
-         vf_exists = False
-      
-      if (vf_exists and (not opts.clobber)):
-         log(20, '%r exits already; skipping this video.' % (fn,))
-         continue
+         continue         
       
       for c in opts.dtype:
          getattr(ref,dt_map[c])()
