@@ -1,0 +1,73 @@
+==== Meta ====
+This is a README file documenting Yet Another Video Download Tool, abbreviated
+YAVDLT.
+
+
+==== Functionality ====
+TAVDLT is a cmdline program to download data from Youtube, and perform various
+kinds of post-processing on said data. One of its design goals is compatibility;
+if there's any decent way to get at a YT video, TAVDLT should allow you to do
+it without unnecessary pain.
+In addition, YAVDLT has a larger feature set than most similar tools; currently,
+its feature set includes:
+  * Downloading Audio/Video files, in any format supported by YT.
+
+  * Downloading TimedText data and converting it to the SSA subtitle format,
+    which is widely supported by software media players.
+
+  * Downloading Annotation data and converting it to the SSA subtitle format.
+
+  * Flexible format selection heuristics; you can define any number of format
+    preference lists, and choose one for each download - allowing you to choose
+    the specific tradeoff between file size and video quality, without having to
+    keep in mind the details of YT video formats on each download.
+
+  * Support for custom URL mangling schemes, allowing you to send HTTP requests
+    through http-layer gateways.
+
+  * Flexible input of video specs; you can specify videos as any combination of:
+    * Raw youtube ids, e.g. 'dhRUe-gz690'
+    * Watch page urls, e.g. 'http://www.youtube.com/watch?v=dhRUe-gz690'
+    * Embed urls, e.g. 'http://www.youtube.com/v/dhRUe-gz690'
+
+  * Support for downloading all videos from a playlist
+
+  * Detailed download progress reports.
+
+==== System requirements ====
+  * CPython 3.1+
+
+Note that use of YAVDLT on non-posix-like OSes is currently highly
+experimental - it should be possibly in theory, but at this time no test data
+on how well it works in practice is available.
+
+
+==== Usage examples ====
+To download a single video, including any annotations and timedtext data,
+any of these work:
+ ./yavdlt.py dhRUe-gz690
+ ./yavdlt.py http://www.youtube.com/watch?v=dhRUe-gz690
+ ./yavdlt.py http://www.youtube.com/v/dhRUe-gz690
+
+To download all videos from a playlist:
+ ./yavdlt.py --playlist CDFEA6D52E5CC0EC
+
+To force a specific video format:
+ ./yavdlt.py --fmt 18 dhRUe-gz690
+
+
+==== Config ====
+A config file isn't necessary for YTAVDLT use, but using one allows you to
+influence its behaviour in more detail than cmdline switches.
+By default, YTAVDLT will look for its config file in ~/.yavdlt/config;
+this can be overridden using the --config switch.
+
+For details on configuration, see the example config file 'example.conf'
+you should have gotten along with this file.
+
+
+==== Contact ====
+Please send any bug reports, feature requests, comments, etc. to
+sebastian_hagen@memespace.net.
+Using a subject line beginning with 'YAVDLT: ' will increase the probability
+that your mail doesn't accidentally get classified as spam.
