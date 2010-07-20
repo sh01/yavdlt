@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # yt_getter: Download information from youtube
 # Copyright (C) 2009,2010  Sebastian Hagen
 #
@@ -15,24 +15,22 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import sys
+if (sys.version_info[0] < 3):
+   # No point in going any further; we'd just fail with a more cryptic error message a few lines later.
+   raise Exception("This is a python 3 script; it's not compatible with older interpreters.")
 
 import collections
-import httplib
+import html.parser
+import http.client
 import logging
-import urllib
-import urllib2
+import urllib.request
 import re
 import xml.dom.minidom
 
-from cStringIO import StringIO
+from io import BytesIO
 
-def xml_unescape(s):
-   import htmllib
-   p = htmllib.HTMLParser(None)
-   p.save_bgn()
-   p.feed(s)
-   return p.save_end()
-
+xml_unescape = html.parser.HTMLParser().unescape
 
 YTAnnotationRRBase = collections.namedtuple('YTAnnotationRR', ('t','x','y','w','h','d'))
 YTAnnotationBase = collections.namedtuple('YTAnnotationBase', ('id','author','type','content', 'style','r1','r2'))
@@ -107,9 +105,9 @@ class YTAnnotation(YTAnnotationBase):
       return cls(**kwargs)
    
    def fmt_ssa(self):
-      return u'Dialogue: 0,%s,%s,Default,,0000,0000,0000,,%s' % (
+      return 'Dialogue: 0,{0},{1},Default,,0000,0000,0000,,{2}'.format(
          _second2ssa_ts(self.r1.t),
-         _second2ssa_ts(self.r2.t), 
+         _second2ssa_ts(self.r2.t),
          self.content.replace('\n', '\\N')
       )
    
@@ -158,24 +156,24 @@ def print_ytannos_hr(annotations):
    for annotation in annotations:
       if (not annotation.is_sublike()):
          continue
-      print '%8.2f %8.2f   %r' % (annotation.r1.t, annotation.r2.t, annotation.content)
+      print('%8.2f %8.2f   %r' % (annotation.r1.t, annotation.r2.t, annotation.content))
 
 
 def dump_ytannos_ssa(annotations, file_out):
    # Include UTF-8 BOM; according to user reports some players care about this
-   file_out.write('\xef\xbb\xbf')
-   file_out.write('[Script Info]\r\n')
-   file_out.write('ScriptType: v4.00+\r\n')
-   file_out.write('[V4+ Styles]\r\n')
-   file_out.write('Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\r\n')
-   file_out.write('Style: Default,,20,&H00FFFFFF,&HFFFFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,10,1\r\n')
-   file_out.write('[Events]\r\n')
-   file_out.write('Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\r\n')
+   file_out.write(b'\xef\xbb\xbf')
+   file_out.write(b'[Script Info]\r\n')
+   file_out.write(b'ScriptType: v4.00+\r\n')
+   file_out.write(b'[V4+ Styles]\r\n')
+   file_out.write(b'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\r\n')
+   file_out.write(b'Style: Default,,20,&H00FFFFFF,&HFFFFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,10,1\r\n')
+   file_out.write(b'[Events]\r\n')
+   file_out.write(b'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\r\n')
    for annotation in annotations:
       if (not annotation.is_sublike()):
          continue
       file_out.write(annotation.fmt_ssa().encode('utf-8'))
-      file_out.write('\r\n')
+      file_out.write(b'\r\n')
 
 
 class YTimedTextList:
@@ -195,16 +193,17 @@ class YTimedTextList:
       return cls(vid, tuple(tdata))
    
    def get_url(self, name, lc):
-      if (isinstance(name, unicode)):
-         name = name.encode('utf-8')
-      return 'http://video.google.com/timedtext?hl=en&v=%s&type=track&name=%s&lang=%s' % (self.vid, urllib.quote(name), urllib.quote(lc))
+      if (isinstance(name, bytes)):
+         name = name.decode('ascii')
+      return 'http://video.google.com/timedtext?hl=en&v={0}&type=track&name={1}&lang={2}'.format(self.vid,
+         urllib.parse.quote(name), urllib.parse.quote(lc))
    
    def fetch_all_blocking(self):
       rv = []
       for (name, lc) in self.tdata:
          url = self.get_url(name, lc)
          self.log(20, 'Fetching timedtext data from %r and processing.' % (url))
-         req = urllib2.urlopen(url)
+         req = urllib.request.urlopen(url)
          content = req.read()
          tt_entries = YTimedTextEntry.parse_block(content)
          rv.append((name, lc, tt_entries))
@@ -255,13 +254,13 @@ class YTimedTextEntry:
       return True
    
    def fmt_ssa(self):
-      return u'Dialogue: 0,%s,%s,Default,,0000,0000,0000,,%s' % (
+      return 'Dialogue: 0,{0},{1},Default,,0000,0000,0000,,{2}'.format(
          _second2ssa_ts(self.ts_start),
          _second2ssa_ts(self.ts_start+self.dur),
          self.text.replace('\n', '\\N')
       )
 
-class YTError(StandardError):
+class YTError(Exception):
    pass
 
 class YTLoginRequired(YTError):
@@ -353,12 +352,13 @@ class YTVideoRef:
          self.get_token_watch()
    
    def get_token_getvideoinfo(self):
-      from urllib import splitvalue, unquote, unquote_plus
+      from urllib.parse import splitvalue, unquote, unquote_plus
       
       url = self.URL_FMT_GETVIDEOINFO % (self.vid,)
       url = self.mangle_yt_urls(url)
-      content = urllib2.urlopen(url).read()
-      def uqv((key, val)):
+      content = urllib.request.urlopen(url).read().decode('ascii')
+      def uqv(d):
+         (key, val) = d
          return (key, unquote_plus(val))
       
       vi = dict(uqv(splitvalue(cfrag)) for cfrag in content.split('&'))
@@ -387,7 +387,7 @@ class YTVideoRef:
       url = self.URL_FMT_WATCH % (self.vid, fmt)
       url = self.mangle_yt_urls(url)
       
-      content = urllib2.urlopen(url).read()
+      content = urllib.request.urlopen(url).read()
       
       m = self.re_tok.search(content)
       if (m is None):
@@ -452,9 +452,9 @@ class YTVideoRef:
       
       fn_out = self.choose_fn()
       try:
-         f = file(fn_out, 'r+b')
+         f = open(fn_out, 'r+b')
       except IOError:
-         f = file(fn_out, 'w+b')
+         f = open(fn_out, 'w+b')
       
       f.seek(0,2)
       flen = f.tell()
@@ -478,8 +478,8 @@ class YTVideoRef:
       else:
          prefix_data = None
       
-      req = urllib2.Request(url, headers=req_headers)
-      res = urllib2.urlopen(req)
+      req = urllib.request.Request(url, headers=req_headers)
+      res = urllib.request.urlopen(req)
       
       if (off_start and (res.code != 206)):
          raise YTError('Download resume failed; got unexpected HTTP response code {0}.'.format(res.code))
@@ -524,26 +524,26 @@ class YTVideoRef:
    def fetch_annotations(self):
       url = 'http://www.google.com/reviews/y/read2?video_id=%s' % (self.vid,)
       self.log(20, 'Fetching annotations from %r.' % (url,))
-      req = urllib2.urlopen(url)
+      req = urllib.request.urlopen(url)
       content = req.read()
       self.log(20, 'Parsing annotation data.')
-      annotations = parse_ytanno(StringIO(content))
+      annotations = parse_ytanno(BytesIO(content))
       if (len(annotations) < 1):
          self.log(20, 'There are no annotations for this video.')
          return
       
       fn_out = self.choose_fn('ssa')
       self.log(20, 'Received %d annotations; writing to %r.' % (len(annotations), fn_out))
-      f = file(fn_out, 'wb')
+      f = open(fn_out, 'wb')
       dump_ytannos_ssa(annotations, f)
       f.close()
    
    def fetch_tt(self):
       url = 'http://video.google.com/timedtext?v=%s&type=list' % (self.vid,)
       self.log(20, 'Checking for timedtext data.')
-      req = urllib2.urlopen(url)
+      req = urllib.request.urlopen(url)
       content = req.read()
-      if (content == ''):
+      if (content == b''):
          self.log(20, 'No timedtext data found.')
          return
       
@@ -558,16 +558,16 @@ class YTVideoRef:
          name = name.replace('/', '').replace('\x00','')
          fn = self.choose_fn('%s_%s.ssa' % (lc, name))
          self.log(20, 'Writing timedtext data for name %r, lc %r to %r.' % (name, lc, fn))
-         if (isinstance(fn, unicode)):
+         if (isinstance(fn, str)):
             fn = fn.encode('utf-8')
-         f = file(fn, 'wb')
+         f = open(fn, 'wb')
          dump_ytannos_ssa(ttel, f)
          f.close()
    
    def fmt_url_map_fetch_update(self, fmt):
       url = self.URL_FMT_WATCH % (self.vid, fmt)
       url = self.mangle_yt_urls(url)
-      content = urllib2.urlopen(url).read()
+      content = urllib.request.urlopen(url).read()
       self.fmt_url_map_update_markup(content)
    
    def fmt_url_map_update(self, ums):
@@ -582,7 +582,7 @@ class YTVideoRef:
          self.fmt_url_map[fmt] = url
    
    def fmt_url_map_update_markup(self, markup):
-      from urllib import unquote
+      from urllib.parse import unquote
       
       m = self.re_fmt_url_map_markup.search(markup)
       if (m is None):
@@ -598,6 +598,7 @@ class YTVideoRef:
       self.fmt_url_map_update(ums)
    
    def pick_video(self):
+      from urllib.parse import splittype, splithost
       if (self.fmt):
          fmts = (self.fmt,)
       elif (self.maximize_quality):
@@ -610,13 +611,13 @@ class YTVideoRef:
          rc = 301
          
          while (301 <= rc <= 303):
-            (type_, dp) = urllib2.splittype(url)
-            (host, path) = urllib2.splithost(dp)
-            conn = httplib.HTTPConnection(host)
+            (type_, dp) = splittype(url)
+            (host, path) = splithost(dp)
+            conn = http.client.HTTPConnection(host)
             conn.request('HEAD',path)
             try:
                response = conn.getresponse()
-            except httplib.BadStatusLine:
+            except http.client.BadStatusLine:
                # Happens for some responses ... don't know why, don't really
                # care.
                rc = None
@@ -673,7 +674,7 @@ class YTPlayListRef:
       """Fetch playlist and parse out vids."""
       pl_url = self.pl_base_url % self.plid
       self.log(20, 'Retrieving playlist from %r.' % (pl_url,))
-      req = urllib2.urlopen(pl_url)
+      req = urllib.request.urlopen(pl_url)
       pl_markup = req.read()
       self.log(20, 'Parsing playlist data.')
       pl_dom = xml.dom.minidom.parseString(pl_markup)
@@ -745,7 +746,7 @@ def get_embedded_yturls(url):
    log = logging.getLogger('embed_fetch').log
    
    log(20, 'Fetching embedding document %r' % (url,))
-   req = urllib2.urlopen(url)
+   req = urllib.request.urlopen(url)
    log(20, 'Extracting urls for embedded yt videos.')
    
    html = req.read()
