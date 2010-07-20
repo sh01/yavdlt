@@ -24,6 +24,7 @@ import collections
 import html.parser
 import http.client
 import logging
+import os.path
 import urllib.request
 import re
 import xml.dom.minidom
@@ -191,10 +192,10 @@ class YTimedTextList:
       return 'http://video.google.com/timedtext?hl=en&v={0}&type=track&name={1}&lang={2}'.format(self.vid,
          urllib.parse.quote(name), urllib.parse.quote(lc))
    
-   def fetch_all_blocking(self):
+   def fetch_all_blocking(self, url_mangler):
       rv = []
       for (name, lc) in self.tdata:
-         url = self.get_url(name, lc)
+         url = url_mangler(self.get_url(name, lc))
          self.log(20, 'Fetching timedtext data from {0!a} and processing.'.format(url))
          req = urllib.request.urlopen(url)
          content = req.read()
@@ -263,6 +264,8 @@ class YTDefaultFmt:
    def __str__(self):
       return 'default'
 
+FMT_DEFAULT = YTDefaultFmt()
+
 class YTVideoRef:
    re_tok = re.compile('&t=(?P<field_t>[^"&]+)&')
    re_title = re.compile('<link rel="alternate" +type="application/json\+oembed" +href="[^"]*" +title="(?P<text>.*?)" */>')
@@ -271,7 +274,6 @@ class YTVideoRef:
    re_fmt_url_map_markup = re.compile(r'\? "(?P<umm>.*?fmt_url_map=.*?>)"')
    re_fmt_url_map = re.compile('fmt_url_map=(?P<ums>[^"&]+)&')
    
-   FMT_DEFAULT = YTDefaultFmt()
    URL_FMT_WATCH = 'http://www.youtube.com/watch?v={0}&fmt={1}'
    URL_FMT_GETVIDEO = 'http://www.youtube.com/get_video?video_id={0}&t={1}{2}'
    URL_FMT_GETVIDEOINFO = 'http://youtube.com/get_video_info?video_id={0}'
@@ -284,57 +286,28 @@ class YTVideoRef:
       'video/x-flv': 'flv',
       'video/webm': 'webm'
    }
-   
-   fmts = (
-      18, # mp4/h264, SQ
-      22, # mp4/h264, HQ
-      37, # mp4/h264, HQ+
-      35, # flv/h264, SQ
-      34, # flv/h264, LQ
-       6, # flv/sor, SQ
-       5, # flv/sor, LQ
-    FMT_DEFAULT # some flv thing
-    )
-   
-   fmts_mq = (
-      37,
-      22,
-      35,
-      34,
-      18,
-      5,
-      FMT_DEFAULT
-   )
 
-   def __init__(self, vid, fmt=None, maximize_quality=False):
+   def __init__(self, vid, format_pref_list):
       self.vid = vid
       self.tok = None
-      self.fmt = fmt
       self._mime_type = None
       self.fmt_url_map = {}
       self.force_fmt_url_map_use = False
       self.got_video_info = False
       self.title = None
-      self.maximize_quality = maximize_quality
+      self.fpl = format_pref_list
    
-   def mangle_yt_urls(self, url):
-      """This function will be called to preprocess YT urls.
+   def mangle_yt_url(self, url):
+      """This function will be called to preprocess any and all YT urls.
       
-      The default implementation simply returns its first argument.
-      
-      YT implements region restrictions by checking the client IP on metadata
-      (i.e. watch or getvideoinfo) requests, and locks the actual download URL
-      to a client IP (range; precise details currently unknown).
-      
-      Hence, the only known safe method to avoid region restrictions can only
-      is to pass all requests to YT through an http gateway.
-      
-      If you want to do that, override or overwrite this method and do your URL
-      mangling here."""
+      This default implementation simply returns its first argument. If you
+      want to perform URL mangling, override or overwrite this method for the
+      relevant YTVideoRef instance(s) with a callable that implements the
+      mapping you desire."""
       return url
    
    def url_get_annots(self):
-      return 'http://www.google.com/reviews/y/read2?video_id={0}'.format(self.vid)
+      return self.mangle_yt_url('http://www.google.com/reviews/y/read2?video_id={0}'.format(self.vid))
    
    def get_token_blocking(self):
       self.log(20, 'Acquiring YT metadata.')
@@ -348,7 +321,7 @@ class YTVideoRef:
       from urllib.parse import splitvalue, unquote, unquote_plus
       
       url = self.URL_FMT_GETVIDEOINFO.format(self.vid)
-      url = self.mangle_yt_urls(url)
+      url = self.mangle_yt_url(url)
       content = urllib.request.urlopen(url).read().decode('ascii')
       def uqv(d):
          (key, val) = d
@@ -369,16 +342,13 @@ class YTVideoRef:
       self.got_video_info = True
    
    def get_token_watch(self):
-      if (self.fmt):
-         fmt = self.fmt
-      else:
-         fmt = self.fmts[0]
+      fmt = self.fpl[0]
       
-      if (fmt is self.FMT_DEFAULT):
+      if (fmt is FMT_DEFAULT):
          fmt = ''
       
       url = self.URL_FMT_WATCH.format(self.vid, fmt)
-      url = self.mangle_yt_urls(url)
+      url = self.mangle_yt_url(url)
       
       content = urllib.request.urlopen(url).read()
       
@@ -515,7 +485,7 @@ class YTVideoRef:
       f.close()
    
    def fetch_annotations(self):
-      url = 'http://www.google.com/reviews/y/read2?video_id={0}'.format(self.vid)
+      url = self.url_get_annots()
       self.log(20, 'Fetching annotations from {0!a}.'.format(url))
       req = urllib.request.urlopen(url)
       content = req.read()
@@ -532,7 +502,7 @@ class YTVideoRef:
       f.close()
    
    def fetch_tt(self):
-      url = 'http://video.google.com/timedtext?v={0}&type=list'.format(self.vid)
+      url = self.mangle_yt_url('http://video.google.com/timedtext?v={0}&type=list'.format(self.vid))
       self.log(20, 'Checking for timedtext data.')
       req = urllib.request.urlopen(url)
       content = req.read()
@@ -541,7 +511,7 @@ class YTVideoRef:
          return
       
       ttl = YTimedTextList.build_from_markup(self.vid, content)
-      tdata = ttl.fetch_all_blocking()
+      tdata = ttl.fetch_all_blocking(self.mangle_yt_url)
       
       if (len(tdata) < 1):
          self.log(20, 'No timedtext streams found.')
@@ -559,7 +529,7 @@ class YTVideoRef:
    
    def fmt_url_map_fetch_update(self, fmt):
       url = self.URL_FMT_WATCH.format(self.vid, fmt)
-      url = self.mangle_yt_urls(url)
+      url = self.mangle_yt_url(url)
       content = urllib.request.urlopen(url).read()
       self.fmt_url_map_update_markup(content)
    
@@ -592,14 +562,8 @@ class YTVideoRef:
    
    def pick_video(self):
       from urllib.parse import splittype, splithost
-      if (self.fmt):
-         fmts = (self.fmt,)
-      elif (self.maximize_quality):
-         fmts = self.fmts_mq
-      else:
-         fmts = self.fmts
       
-      for fmt in fmts:
+      for fmt in self.fpl:
          url = self.get_video_url(fmt)
          rc = 301
          
@@ -640,17 +604,17 @@ class YTVideoRef:
       
       if (fmt in self.fmt_url_map):
          self.log(20, 'Using cached direct video url.')
-         return self.mangle_yt_urls(self.fmt_url_map[fmt])
+         return self.mangle_yt_url(self.fmt_url_map[fmt])
       
       if (self.tok is None):
          raise ValueError('Need to get token first.')
       
-      if (fmt is self.FMT_DEFAULT):
+      if (fmt is FMT_DEFAULT):
          fmtstr = ''
       else:
          fmtstr = '&fmt={0:d}'.format(fmt)
       
-      rv = self.mangle_yt_urls(self.URL_FMT_GETVIDEO.format(self.vid, self.tok, fmtstr))
+      rv = self.mangle_yt_url(self.URL_FMT_GETVIDEO.format(self.vid, self.tok, fmtstr))
       return rv
 
 
@@ -756,36 +720,159 @@ def get_embedded_yturls(url):
    #urls = [xml_unescape(u) for u in urls]
    return set(urls)
 
+class Config:
+   # internal stuff
+   logger = logging.getLogger('config')
+   log = logger.log
+   
+   _dt_map = dict(
+      v='fetch_video',
+      a='fetch_annotations',
+      t='fetch_tt'
+   )
+   config_fn_default = '~/.yavdlt/config'
+   
+   # config scope
+   FMT_DEFAULT = FMT_DEFAULT
+   
+   # config / cmdline var defaults
+   loglevel = 15
+   data_type = ''.join(_dt_map.keys())
+   config_fn = None
+   list_url_manglers = False
+   
+   def __init__(self):
+      self._url_manglers = {}
+      self._fmt_preflists = {}
+      self._default_fpl = (22, 35, 34, 18, 5, FMT_DEFAULT)
+      self._args = None
+      
+      self.fpl = None
+      self.dtype = 'avt'
+      self.fmt = None
+      self.url_mangler = None
+      self.playlist = None
 
-url_mappers = {}
-def url_mapper_reg(key):
-   def r(val):
-      url_mappers[key] = val
-      return val
-   return r
+   def url_mapper_reg(self, name):
+      def r(val):
+         self._url_manglers[name] = val
+         return val
+      return r
+   
+   def add_format_preflist(self, name, pl, *, default=False):
+      if (default):
+         self._default_fpl = pl
+      self._fmt_preflists[name] = pl
+   
+   def make_urlmangler_phpproxy_base64(self, name, baseurl):
+      @self.url_mapper_reg(name)
+      def url_mangle(url):
+         import base64
+         return ''.join((baseurl, '/index.php?q=', base64.encodestring(url).replace('\n','')))
+      return url_mangle
 
-# Commented out for the moment, since it's broken for (most?) video downloads
-# due to using a sotre-and-forward mechanism.
-#@url_mapper_reg('sixxs')
-#def url_mangle_sixxs_46gw(url):
-   #from urllib import splithost, splittype
-   #(utype, urest) = splittype(url)
-   #(uhost, upath) = splithost(urest)
-   #uhost += '.sixxs.org'
-   #rv = '%s://%s%s' % (utype, uhost, upath)
-   #return rv
-
-def make_urlmangler_phpproxy_base64(name, baseurl):
-   @url_mapper_reg(name)
-   def url_mangle(url):
-      import base64
-      return ''.join((baseurl, '/index.php?q=', base64.encodestring(url).replace('\n','')))
-   return url_mangle
-
-make_urlmangler_phpproxy_base64('kwcz', 'http://www.kowalczuk.info/')
-#make_urlmangler_phpproxy_base64('ubsc', 'http://unblock-blocked-sites.com')
-#make_urlmangler_phpproxy_base64('wpbc', 'http://webproxybrowser.com')
-
+   def _read_config_file(self):
+      from os.path import expanduser, expandvars
+      if (self.config_fn is None):
+         fn = expandvars(expanduser(self.config_fn_default))
+         if not (os.path.exists(fn)):
+            self.log(20, "Config file {0!a} doesn't exist; using builtin default values.".format(fn))
+            return
+      else:
+         fn = expandvars(expanduser(self.config_fn))
+      
+      config_lns = self.__dict__
+      config_gns = {}
+      for name in dir(self):
+         if name.startswith('_'):
+            continue
+         if (name in config_lns):
+            continue
+         config_gns[name] = getattr(self, name)
+      
+      f = open(fn, 'rb')
+      code = compile(f.read(), fn, 'exec')
+      exec(code, config_gns, config_lns)
+   
+   def _determine_settings(self):
+      (opts, args) = self._read_opts()
+      # update the config fn and loglevel first
+      self._apply_optvals(opts)
+      self._read_config_file()
+      # override config file settings with info from cmdline.
+      self._apply_optvals(opts)
+      self._args = args
+   
+   def _apply_optvals(self, opts):
+      for (name, val) in opts.__dict__.items():
+         if not (val is None):
+            setattr(self, name, val)
+      logging.getLogger().setLevel(self.loglevel)
+   
+   def _read_opts(self):
+      import optparse
+      
+      op = optparse.OptionParser(usage="%prog [options] <yt video id>*")
+      oa = op.add_option
+      oa('-c', '--config', dest='config_fn', help='Config file to use.', metavar='FILENAME')
+      oa('-d', '--data-type', dest='dtype', help='Data types to download')
+      oa('--fmt', type=int, dest='fmt', help="YT format number to use.")
+      oa('--fpl', help='Pick format preference list.')
+      oa('--playlist', help='Parse (additional) video ids from specified playlist', metavar='PLAYLIST_ID')
+      oa('--list-url-manglers', dest='list_url_manglers', action='store_true', help='Print lists of known URL manglers and exit')
+      oa('--url-mangler', '-u', dest='url_mangler', metavar='SERVICENAME', help='Fetch metadata pages through specified HTTP gateway')
+      oa('-q', '--quiet', dest='loglevel', action='store_const', const=30, help='Limit output to errors.')
+      
+      rv = op.parse_args()
+      op.destroy()
+      return rv
+   
+   def _get_um(self):
+      if (self.url_mangler is None):
+         return None
+         
+      if (hasattr(self.url_mangler, '__call__')):
+         return self.url_mangler
+      
+      try:
+         rv = self._url_manglers[self.url_mangler]
+      except KeyError as exc:
+         raise Exception('Unknown url mangler {0!a}.'.format(self.url_mangler)) from exc
+      return rv
+   
+   def _get_vids(self):
+      vids_set = set()
+      rv = []
+   
+      def update_vids(s):
+         for vid in s:
+            if (vid in vids_set):
+               continue
+            vids_set.add(vid)
+            rv.append(vid)
+   
+      for vid_str in self._args:
+         update_vids(arg2vidset(vid_str))
+   
+      if (self.playlist):
+         plr = YTPlayListRef(self.playlist)
+         plr.fetch_pl()
+         update_vids(plr.vids)
+      return rv
+   
+   def _get_fpl(self):
+      if (not self.fmt is None):
+         return (self.fmt,)
+      
+      if not (self.fpl is None):
+         try:
+            rv = self._fmt_preflists[self.fpl]
+         except KeyError as exc:
+            raise Exception('Unknown preflist {0}; available preflists are {1}.'.format(self.fpl, list(self._fmt_preflists.keys())))
+         return rv
+      
+      return self._default_fpl
+         
 
 
 def main():
@@ -799,74 +886,33 @@ def main():
    logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s',
       stream=sys.stderr, level=logging.DEBUG)
    
-   dt_map = dict(
-      v='fetch_video',
-      a='fetch_annotations',
-      t='fetch_tt'
-   )
+   conf = Config()
+   conf._determine_settings()
    
-   op = optparse.OptionParser(usage="%prog [options] <yt video id>*")
-   op.add_option('-d', '--data-type', dest='dtype', default=''.join(dt_map.keys()), help='Data types to download')
-   op.add_option('--fmt', default=None, help="YT format number to use.")
-   op.add_option('--hd', default=False, action='store_true', help='Optimize for quality; get highest-resolution files available.')
-   op.add_option('--playlist', default=None, help='Parse (additional) video ids from specified playlist', metavar='PLAYLIST_ID')
-   op.add_option('--list-http-gateways', dest='list_http_gateways', default=False, action='store_true', help='Print lists of known http gateways and exit')
-   op.add_option('--http-gateway', dest='http_gateway', default=None, metavar='SERVICENAME', help='Fetch metadata pages through specified HTTP gateway')
-   op.add_option('-q', '--quiet', dest='loglevel', default=15, action='store_const', const=30, help='Limit output to errors.')
-   
-   (opts, args) = op.parse_args()
-   if (opts.list_http_gateways):
-      print(list(url_mappers.keys()))
+   if (conf.list_url_manglers):
+      print(list(conf._url_manglers.keys()))
       return
    
-   logger.setLevel(opts.loglevel)
+   log(20, 'Settings determined.')
    
-   log(20, 'Init.')
-   
-   fmt = opts.fmt
-   if not (fmt is None):
-      fmt = int(fmt)
-   
-   for c in opts.dtype:
-      if not (c in dt_map):
+   for c in conf.dtype:
+      if not (c in conf._dt_map):
          raise ValueError('Unknown data type {0!a}.'.format(c))
    
-   vids_set = set()
-   vids = []
-   
-   if not (opts.http_gateway is None):
-      try:
-         hgw = url_mappers[opts.http_gateway]
-      except KeyError:
-         print('Unknown http gateway {0!a}.'.format(opts.http_gateway))
-         return
-   else:
-      hgw = None
-   
-   def update_vids(s):
-      for vid in s:
-         if (vid in vids_set):
-            continue
-         vids_set.add(vid)
-         vids.append(vid)
-   
-   for vid_str in args:
-      update_vids(arg2vidset(vid_str))
-   
-   if (opts.playlist):
-      plr = YTPlayListRef(opts.playlist)
-      plr.fetch_pl()
-      update_vids(plr.vids)
+   um = conf._get_um()
+   vids = conf._get_vids()
    
    log(20, 'Final vid set: {0}'.format(vids))
    vids_failed = []
    
+   fpl = conf._get_fpl()
+   
    for vid in vids:
       log(20, 'Fetching data for video with id {0!a}.'.format(vid))
-      ref = YTVideoRef(vid, fmt, maximize_quality=opts.hd)
+      ref = YTVideoRef(vid, fpl)
       
-      if not (hgw is None):
-         ref.mangle_yt_urls = hgw
+      if not (um is None):
+         ref.mangle_yt_url = um
          ref.force_fmt_url_map_use = True
       
       try:
@@ -876,8 +922,8 @@ def main():
          vids_failed.append(vid)
          continue         
       
-      for c in opts.dtype:
-         getattr(ref,dt_map[c])()
+      for c in conf.dtype:
+         getattr(ref,conf._dt_map[c])()
    
    if (vids_failed):
       log(30, 'Failed to retrieve videos: {0}.'.format(vids_failed))
