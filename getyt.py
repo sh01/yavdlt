@@ -60,11 +60,11 @@ class YTAnnotationRR(YTAnnotationRRBase):
 
 
 def _second2ssa_ts(seconds):
-   hours = (seconds//3600)
+   hours = int(seconds//3600)
    seconds %= 3600
-   minutes = (seconds//60)
+   minutes = int(seconds//60)
    seconds %= 60
-   return '%d:%02d:%05.2f' % (hours, minutes, seconds)
+   return '{0:d}:{1:02d}:{2:05.2f}'.format(hours, minutes, seconds)
    
 
 class YTAnnotation(YTAnnotationBase):
@@ -152,13 +152,6 @@ def parse_ytanno(f):
    return annotations
 
 
-def print_ytannos_hr(annotations):
-   for annotation in annotations:
-      if (not annotation.is_sublike()):
-         continue
-      print('%8.2f %8.2f   %r' % (annotation.r1.t, annotation.r2.t, annotation.content))
-
-
 def dump_ytannos_ssa(annotations, file_out):
    # Include UTF-8 BOM; according to user reports some players care about this
    file_out.write(b'\xef\xbb\xbf')
@@ -202,7 +195,7 @@ class YTimedTextList:
       rv = []
       for (name, lc) in self.tdata:
          url = self.get_url(name, lc)
-         self.log(20, 'Fetching timedtext data from %r and processing.' % (url))
+         self.log(20, 'Fetching timedtext data from {0!a} and processing.'.format(url))
          req = urllib.request.urlopen(url)
          content = req.read()
          tt_entries = YTimedTextEntry.parse_block(content)
@@ -279,9 +272,9 @@ class YTVideoRef:
    re_fmt_url_map = re.compile('fmt_url_map=(?P<ums>[^"&]+)&')
    
    FMT_DEFAULT = YTDefaultFmt()
-   URL_FMT_WATCH = 'http://www.youtube.com/watch?v=%s&fmt=%s'
-   URL_FMT_GETVIDEO = 'http://www.youtube.com/get_video?video_id=%s&t=%s%s'
-   URL_FMT_GETVIDEOINFO = 'http://youtube.com/get_video_info?video_id=%s'
+   URL_FMT_WATCH = 'http://www.youtube.com/watch?v={0}&fmt={1}'
+   URL_FMT_GETVIDEO = 'http://www.youtube.com/get_video?video_id={0}&t={1}{2}'
+   URL_FMT_GETVIDEOINFO = 'http://youtube.com/get_video_info?video_id={0}'
    
    logger = logging.getLogger('YTVideoRef')
    log = logger.log
@@ -341,7 +334,7 @@ class YTVideoRef:
       return url
    
    def url_get_annots(self):
-      return 'http://www.google.com/reviews/y/read2?video_id=%s' % (self.vid,)
+      return 'http://www.google.com/reviews/y/read2?video_id={0}'.format(self.vid)
    
    def get_token_blocking(self):
       self.log(20, 'Acquiring YT metadata.')
@@ -354,7 +347,7 @@ class YTVideoRef:
    def get_token_getvideoinfo(self):
       from urllib.parse import splitvalue, unquote, unquote_plus
       
-      url = self.URL_FMT_GETVIDEOINFO % (self.vid,)
+      url = self.URL_FMT_GETVIDEOINFO.format(self.vid)
       url = self.mangle_yt_urls(url)
       content = urllib.request.urlopen(url).read().decode('ascii')
       def uqv(d):
@@ -364,8 +357,8 @@ class YTVideoRef:
       vi = dict(uqv(splitvalue(cfrag)) for cfrag in content.split('&'))
       
       if (vi['status'] != 'ok'):
-         self.log(20, 'YT Refuses to deliver video info: %r' % (vi,))
-         raise YTError('YT Refuses to deliver video info: %r' % (vi,))
+         self.log(20, 'YT Refuses to deliver video info: {0!a}'.format(vi))
+         raise YTError('YT Refuses to deliver video info: {0!a}'.format(vi))
       
       self.tok = vi['token']
       self.title = vi['title']
@@ -384,7 +377,7 @@ class YTVideoRef:
       if (fmt is self.FMT_DEFAULT):
          fmt = ''
       
-      url = self.URL_FMT_WATCH % (self.vid, fmt)
+      url = self.URL_FMT_WATCH.format(self.vid, fmt)
       url = self.mangle_yt_urls(url)
       
       content = urllib.request.urlopen(url).read()
@@ -403,7 +396,7 @@ class YTVideoRef:
          err_text = m_err.groupdict()['text'].strip()
          #err_text = err_text.replace('<br/>', '')
          #err_text = xml_unescape(err_text)
-         raise error_cls('YT refuses to deliver token: %r' % (err_text,))
+         raise error_cls('YT refuses to deliver token: {0!a}.'.format(err_text))
         
       tok = m.groupdict()['field_t']
       
@@ -414,7 +407,7 @@ class YTVideoRef:
       else:
          self.title = m.groupdict()['text']
 
-      self.log(20, 'Acquired token %r.' % (tok,))
+      self.log(20, 'Acquired token {0}.'.format(tok))
       self.tok = tok
       
       self.fmt_url_map_update_markup(content)
@@ -431,7 +424,7 @@ class YTVideoRef:
       if (ext is None):
          ext = self.MIME_EXT_MAP.get(self._mime_type,'bin')
       
-      return 'yt_%s_%s.%s' % (self.vid, mtitle, ext)
+      return 'yt_{0}_{1}.{2}'.format(self.vid, mtitle, ext)
    
    def fetch_data(self):
       self.fetch_video()
@@ -512,7 +505,7 @@ class YTVideoRef:
          if (len(data_read) == 0):
             break
          cl_g += len(data_read)
-         self.log(15, 'Progress: {0} ({1:.2f}%)'.format(cl_g, float(cl_g)/cl*100))
+         self.log(15, 'Progress: {0} ({1:.2%})'.format(cl_g, float(cl_g)/cl))
          f.write(data_read)
       
       if (cl_g != self._content_length):
@@ -522,8 +515,8 @@ class YTVideoRef:
       f.close()
    
    def fetch_annotations(self):
-      url = 'http://www.google.com/reviews/y/read2?video_id=%s' % (self.vid,)
-      self.log(20, 'Fetching annotations from %r.' % (url,))
+      url = 'http://www.google.com/reviews/y/read2?video_id={0}'.format(self.vid)
+      self.log(20, 'Fetching annotations from {0!a}.'.format(url))
       req = urllib.request.urlopen(url)
       content = req.read()
       self.log(20, 'Parsing annotation data.')
@@ -533,13 +526,13 @@ class YTVideoRef:
          return
       
       fn_out = self.choose_fn('ssa')
-      self.log(20, 'Received %d annotations; writing to %r.' % (len(annotations), fn_out))
+      self.log(20, 'Received {0:d} annotations; writing to {1!a}.'.format(len(annotations), fn_out))
       f = open(fn_out, 'wb')
       dump_ytannos_ssa(annotations, f)
       f.close()
    
    def fetch_tt(self):
-      url = 'http://video.google.com/timedtext?v=%s&type=list' % (self.vid,)
+      url = 'http://video.google.com/timedtext?v={0}&type=list'.format(self.vid)
       self.log(20, 'Checking for timedtext data.')
       req = urllib.request.urlopen(url)
       content = req.read()
@@ -556,8 +549,8 @@ class YTVideoRef:
       for ((name, lc, ttel)) in tdata:
          lc = lc.replace('/', '').replace('\x00','')
          name = name.replace('/', '').replace('\x00','')
-         fn = self.choose_fn('%s_%s.ssa' % (lc, name))
-         self.log(20, 'Writing timedtext data for name %r, lc %r to %r.' % (name, lc, fn))
+         fn = self.choose_fn('{0}_{1}.ssa'.format(lc, name))
+         self.log(20, 'Writing timedtext data for name {0!a}, lc {1} to {2}.'.format(name, lc, fn))
          if (isinstance(fn, str)):
             fn = fn.encode('utf-8')
          f = open(fn, 'wb')
@@ -565,7 +558,7 @@ class YTVideoRef:
          f.close()
    
    def fmt_url_map_fetch_update(self, fmt):
-      url = self.URL_FMT_WATCH % (self.vid, fmt)
+      url = self.URL_FMT_WATCH.format(self.vid, fmt)
       url = self.mangle_yt_urls(url)
       content = urllib.request.urlopen(url).read()
       self.fmt_url_map_update_markup(content)
@@ -578,7 +571,7 @@ class YTVideoRef:
          fmt = int(fmt_str)
          
          if not (fmt in self.fmt_url_map):
-            self.log(20, 'Caching direct url for new format %d.' % (fmt,))
+            self.log(20, 'Caching direct url for new format {0:d}.'.format(fmt))
          self.fmt_url_map[fmt] = url
    
    def fmt_url_map_update_markup(self, markup):
@@ -630,12 +623,12 @@ class YTVideoRef:
             mime_type = response.getheader('content-type', None)
             content_length = int(response.getheader('content-length', None))
             if not (content_length is None):
-               self.log(20, 'Fmt %s is good ... using that.' % (fmt,))
+               self.log(20, 'Fmt {0} is good ... using that.'.format(fmt))
                self._mime_type = mime_type
                self._content_length = content_length
                return url
          
-         self.log(20, 'Tried to get video in fmt %s and failed (http response %r).' % (fmt, rc))
+         self.log(20, 'Tried to get video in fmt {0} and failed (http response {1!a}).'.format(fmt, rc))
          
       else:
          self.log(38, 'None of the attempted formats worked out.')
@@ -655,9 +648,9 @@ class YTVideoRef:
       if (fmt is self.FMT_DEFAULT):
          fmtstr = ''
       else:
-         fmtstr = '&fmt=%d' % (fmt,)
+         fmtstr = '&fmt={0:d}'.format(fmt)
       
-      rv = self.mangle_yt_urls(self.URL_FMT_GETVIDEO % (self.vid, self.tok, fmtstr))
+      rv = self.mangle_yt_urls(self.URL_FMT_GETVIDEO.format(self.vid, self.tok, fmtstr))
       return rv
 
 
@@ -665,15 +658,15 @@ class YTPlayListRef:
    logger = logging.getLogger('YTPlaylistRef')
    log = logger.log
    
-   pl_base_url = 'http://gdata.youtube.com/feeds/api/playlists/%s?v=2'
+   pl_base_url = 'http://gdata.youtube.com/feeds/api/playlists/{0}?v=2'
    def __init__(self, plid):
       self.plid = plid
       self.vids = []
    
    def fetch_pl(self):
       """Fetch playlist and parse out vids."""
-      pl_url = self.pl_base_url % self.plid
-      self.log(20, 'Retrieving playlist from %r.' % (pl_url,))
+      pl_url = self.pl_base_url.format(self.plid)
+      self.log(20, 'Retrieving playlist from {0!a}.'.format(pl_url))
       req = urllib.request.urlopen(pl_url)
       pl_markup = req.read()
       self.log(20, 'Parsing playlist data.')
@@ -708,7 +701,7 @@ class YTPlayListRef:
             vids_set.add(vid)
             vids_l.append(vid)
       
-      self.log(20, 'Got %d playlist entries: %r' % (len(vids_l), vids_l))
+      self.log(20, 'Got {0:d} playlist entries: {1!a}'.format(len(vids_l), vids_l))
       self.vids = vids_l
    
 
@@ -728,13 +721,13 @@ def arg2vidset(s, fallback=True):
       return set((m.groupdict()['vid'],))
    else:
       if (fallback):
-         log(20, "%r doesn't look like a direct video spec ... treating as url to embedding document." % (s,))
+         log(20, "{0!a} doesn't look like a direct video spec ... treating as url to embedding document." .format(s))
          rv = set()
          for url in get_embedded_yturls(s):
             rv.update(arg2vidset(url, fallback=False))
          return rv
    
-   raise ValueError('Unable to get video id from string %r.' % (s,))
+   raise ValueError('Unable to get video id from string {0!a}.'.format(s))
 
 
 _re_embedded_split = re.compile('<object')
@@ -745,7 +738,7 @@ def get_embedded_yturls(url):
    import logging
    log = logging.getLogger('embed_fetch').log
    
-   log(20, 'Fetching embedding document %r' % (url,))
+   log(20, 'Fetching embedding document {0!a}'.format(url))
    req = urllib.request.urlopen(url)
    log(20, 'Extracting urls for embedded yt videos.')
    
@@ -836,7 +829,7 @@ def main():
    
    for c in opts.dtype:
       if not (c in dt_map):
-         raise ValueError('Unknown data type %r.' % (c,))
+         raise ValueError('Unknown data type {0!a}.'.format(c))
    
    vids_set = set()
    vids = []
@@ -845,7 +838,7 @@ def main():
       try:
          hgw = url_mappers[opts.http_gateway]
       except KeyError:
-         print('Unknown http gateway %r.' % opts.http_gateway)
+         print('Unknown http gateway {0!a}.'.format(opts.http_gateway))
          return
    else:
       hgw = None
@@ -869,7 +862,7 @@ def main():
    vids_failed = []
    
    for vid in vids:
-      log(20, 'Fetching data for video with id %r.' % (vid,))
+      log(20, 'Fetching data for video with id {0!a}.'.format(vid))
       ref = YTVideoRef(vid, fmt, maximize_quality=opts.hd)
       
       if not (hgw is None):
@@ -879,7 +872,7 @@ def main():
       try:
          ref.get_token_blocking()
       except YTError:
-         log(30, 'Failed to retrieve video %r:' % (vid,), exc_info=True)
+         log(30, 'Failed to retrieve video {0!a}:'.format(vid), exc_info=True)
          vids_failed.append(vid)
          continue         
       
@@ -887,7 +880,7 @@ def main():
          getattr(ref,dt_map[c])()
    
    if (vids_failed):
-      log(30, 'Failed to retrieve videos: %s' % (vids_failed,))
+      log(30, 'Failed to retrieve videos: {0}.'.format(vids_failed))
    log(20, 'All done.')
 
 if (__name__ == '__main__'):
