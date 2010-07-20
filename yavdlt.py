@@ -833,7 +833,7 @@ class Config:
       oa('--fpl', help='Pick format preference list.')
       oa('--playlist', help='Parse (additional) video ids from specified playlist', metavar='PLAYLIST_ID')
       oa('--list-url-manglers', dest='list_url_manglers', action='store_true', help='Print lists of known URL manglers and exit')
-      oa('--url-mangler', '-u', dest='url_mangler', metavar='SERVICENAME', help='Fetch metadata pages through specified HTTP gateway')
+      oa('--url-mangler', '-u', dest='url_mangler', metavar='UMNAME', help='Fetch metadata pages through specified HTTP gateway')
       oa('-q', '--quiet', dest='loglevel', action='store_const', const=30, help='Limit output to errors.')
       
       rv = op.parse_args()
