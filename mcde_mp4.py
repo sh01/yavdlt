@@ -508,6 +508,7 @@ class MovBoxMovie(MovBoxBranch):
    type = FourCC(b'moov')
    CODEC2ID = {
       FourCC(b'mp4a'): CODEC_ID_AAC,
+      FourCC(b'mp4v'): CODEC_ID_MPEG4_2,
       FourCC(b'avc1'): CODEC_ID_MPEG4_10
    }
    
