@@ -364,8 +364,8 @@ class YTVideoRef:
             error_cls = YTError
          
          err_text = m_err.groupdict()['text'].strip()
-         #err_text = err_text.replace('<br/>', '')
-         #err_text = xml_unescape(err_text)
+         err_text = err_text.replace('<br/>', '')
+         err_text = xml_unescape(err_text)
          raise error_cls('YT refuses to deliver token: {0!a}.'.format(err_text))
         
       tok = m.groupdict()['field_t']
@@ -733,6 +733,7 @@ def get_embedded_yturls(url):
    #urls = [xml_unescape(u) for u in urls]
    return set(urls)
 
+
 class Config:
    # internal stuff
    logger = logging.getLogger('config')
@@ -750,7 +751,7 @@ class Config:
    
    # config / cmdline var defaults
    loglevel = 15
-   data_type = ''.join(_dt_map.keys())
+   dtype = ''.join(_dt_map.keys())
    config_fn = None
    list_url_manglers = False
    
@@ -761,7 +762,6 @@ class Config:
       self._args = None
       
       self.fpl = None
-      self.dtype = 'avt'
       self.fmt = None
       self.url_mangler = None
       self.playlist = None
@@ -850,7 +850,8 @@ class Config:
       try:
          rv = self._url_manglers[self.url_mangler]
       except KeyError as exc:
-         raise Exception('Unknown url mangler {0!a}.'.format(self.url_mangler)) from exc
+         raise Exception('Unknown url mangler {0!a}; available ums are {1}.'.format(self.url_mangler,
+            list(self._url_manglers.keys()))) from exc
       return rv
    
    def _get_vids(self):
@@ -885,7 +886,6 @@ class Config:
          return rv
       
       return self._default_fpl
-         
 
 
 def main():
