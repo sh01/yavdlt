@@ -444,18 +444,29 @@ class YTVideoRef:
       req = urllib.request.Request(url, headers=req_headers)
       res = urllib.request.urlopen(req)
       
-      if (off_start and (res.code != 206)):
-         raise YTError('Download resume failed; got unexpected HTTP response code {0}.'.format(res.code))
-      
       cl = self._content_length
       
       try:
          cl_r = int(res.headers.get('content-length'))
       except (KeyError, ValueError, TypeError):
-         pass
-      else:
+         cl_r = None
+      
+      if (off_start):
+         if (res.code == 200):
+            self.log(20, 'Resume failed due to lack of server-side support; will have to redownload the entire file. :(')
+            off_start = 0
+            prefix_data = None
+         elif (res.code != 206):
+            raise YTError('Download resume failed; got unexpected HTTP response code {0}.'.format(res.code))
+      
+      if (cl_r):
          if (cl_r != cl-off_start):
             raise YTError('Content length mismatch.')
+      
+      if (off_start == 0):
+         f.seek(0)
+         f.truncate()
+      
       
       self.log(20, 'Total length is {0} bytes.'.format(cl))
       
@@ -546,6 +557,8 @@ class YTVideoRef:
    
    def fmt_url_map_update_markup(self, markup):
       from urllib.parse import unquote
+      if (isinstance(markup, bytes)):
+         markup = markup.decode('utf-8','surrogateescape')
       
       m = self.re_fmt_url_map_markup.search(markup)
       if (m is None):
@@ -767,8 +780,8 @@ class Config:
    def make_urlmangler_phpproxy_base64(self, name, baseurl):
       @self.url_mapper_reg(name)
       def url_mangle(url):
-         import base64
-         return ''.join((baseurl, '/index.php?q=', base64.encodestring(url).replace('\n','')))
+         from base64 import encodebytes
+         return ''.join((baseurl, '/index.php?q=', encodebytes(url.encode('utf-8','surrogateescape')).replace(b'\n',b'').decode('ascii')))
       return url_mangle
 
    def _read_config_file(self):
