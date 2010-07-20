@@ -559,12 +559,12 @@ class MatroskaElementSegment(MatroskaElementMaster):
                yield(ftc, dur, frame_data, is_kf)
                ftc_delta = dur
       
-   def make_mkvb(self, write_app):
+   def make_mkvb(self):
       info = self.get_sub_by_cls(MatroskaElementInfo)
       
       tcs = info.get_subval_by_cls(MatroskaElementTimecodeScale)
       dur = info.get_subval_by_cls(MatroskaElementDuration)*tcs/10**9
-      mb = MatroskaBuilder(write_app, tcs, dur)
+      mb = MatroskaBuilder(tcs, dur)
       track_c = self.get_sub_by_cls(MatroskaElementTracks)
       
       tracks = list(track_c.sub)
@@ -1253,7 +1253,7 @@ class MatroskaBuilder:
    MS_CM_AUTO = 1
    MS_CM_FORCE = 2
    
-   def __init__(self, write_app, tcs, dur, ts=None):
+   def __init__(self, tcs, dur, ts=None):
       self.ebml_hdr = EBMLHeader.new([
          EBMLElementDocType.new('matroska'),
          EBMLElementDocTypeVersion.new(2), 
@@ -1267,8 +1267,7 @@ class MatroskaBuilder:
          MatroskaElementSegmentUID.new(DataRefBytes(_make_random_uid())),
          MatroskaElementTimecodeScale.new(tcs),
          MatroskaElementDateUTC.new(ts),
-         MatroskaElementMuxingApp.new(self._get_muxapp()),
-         MatroskaElementWritingApp.new(write_app),
+         MatroskaElementMuxingApp.new(self._get_muxapp())
       ])
       
       self.dur = dur
@@ -1278,7 +1277,10 @@ class MatroskaBuilder:
       self.tcs = tcs
       self.tracks = MatroskaElementTracks.new([])
       self.frames = {}
-      
+   
+   def set_writingapp(self, write_app):
+      self.mkv_info.set_sub(MatroskaElementWritingApp.new(write_app))
+   
    def _get_muxapp(self):
       return 'yt_getter.mcio_matroska pre-versioning-version'
    
@@ -1560,7 +1562,8 @@ def _main():
    else:
       return
    
-   mb = el.make_mkvb('mcio_matroska self-test code, pre-versioning version')
+   mb = el.make_mkvb()
+   mb.set_writingapp('mcio_matroska self-test code, pre-versioning version')
    mb.write_to_file(open(b'__mkvdump.mkv.tmp', 'wb'))
    
 

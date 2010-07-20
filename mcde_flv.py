@@ -742,7 +742,7 @@ class FLVReader:
       
       return (version, data_off, has_video, has_audio)
    
-   def make_mkvb(self, write_app):
+   def make_mkvb(self):
       from collections import deque
       import mcio_matroska
       from mcio_matroska import MatroskaBuilder
@@ -807,7 +807,7 @@ class FLVReader:
                   #del(vfbuf[:])
                #vfbuf.append(tag)
                
-      mb = MatroskaBuilder(write_app, 1000000, md['duration'])
+      mb = MatroskaBuilder(1000000, md['duration'])
       
       try:
          vc_id = self.CODEC2ID_V[vd['codec']]
@@ -876,7 +876,8 @@ def _main():
    f = open(fn, 'rb')
    flvr = FLVReader(f)
    flvr.parse_header()
-   mb = flvr.make_mkvb('mcde_flv selftester pre-versioning version')
+   mb = flvr.make_mkvb()
+   mb.set_writingapp('mcde_flv selftester pre-versioning version')
    mb.write_to_file(open(b'__flvdump.mkv.tmp', 'wb'))
    
 

@@ -515,7 +515,7 @@ class MovBoxMovie(MovBoxBranch):
    _HTYPE_SOUN = FourCC(b'soun')
    _HTYPE_VIDE = FourCC(b'vide')
    
-   def make_mkvb(self, write_app):
+   def make_mkvb(self):
       import mcio_matroska
       from mcio_matroska import MatroskaBuilder
       
@@ -527,7 +527,7 @@ class MovBoxMovie(MovBoxBranch):
       mvhd = self.find_subbox('mvhd')
       dur = max(dur, mvhd.get_dur())
       (tcs, elmult, _tcs_err) = MatroskaBuilder.tcs_from_secdiv(ts_base, td_gcd)
-      mb = MatroskaBuilder(write_app, tcs, dur)
+      mb = MatroskaBuilder(tcs, dur)
       
       for track in tracks:
          mdhd = track.get_mdhd()
@@ -797,7 +797,8 @@ def main():
    _dump_atoms(boxes)
    movie = boxes[1]
    tracks = movie.find_subboxes('trak')
-   mb = movie.make_mkvb('mcde_mp4 selftester')
+   mb = movie.make_mkvb()
+   mb.set_writingapp('mcde_mp4 selftester')
    mb.sort_tracks()
    mb.write_to_file(open(b'__mp4dump.mkv.tmp', 'wb'))
 
