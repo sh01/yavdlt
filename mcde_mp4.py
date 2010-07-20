@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# yt_getter: Download information from youtube
+# Yet Another Video Download Tool: Download information from youtube
 # Copyright (C) 2010  Sebastian Hagen
 #
 # This program is free software; you can redistribute it and/or
