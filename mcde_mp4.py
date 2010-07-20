@@ -788,16 +788,26 @@ def _dump_atoms(seq, depth=0):
       if (hasattr(atom, 'sub')):
          _dump_atoms(atom.sub, depth+1)
    
+def make_mkvb_from_file(f):
+   boxes = MovBox.build_seq_from_file(f)
+   for box in boxes:
+      if isinstance(box, MovBoxMovie):
+         break
+   else:
+      raise ValueError('No movie box in MP4 file; got: {0!a}.'.format(boxes))
+   
+   return box.make_mkvb()
 
 def main():
    import sys
    fn = sys.argv[1]
    f = open(fn, 'rb')
+   
    boxes = MovBox.build_seq_from_file(f)
    _dump_atoms(boxes)
-   movie = boxes[1]
-   tracks = movie.find_subboxes('trak')
-   mb = movie.make_mkvb()
+   
+   f.seek(0)
+   mb = make_mkvb_from_file(f)
    mb.set_writingapp('mcde_mp4 selftester')
    mb.sort_tracks()
    mb.write_to_file(open(b'__mp4dump.mkv.tmp', 'wb'))

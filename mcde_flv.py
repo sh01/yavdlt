@@ -869,14 +869,15 @@ class FLVReader:
          self.f.seek(off)
          
 
+def make_mkvb_from_file(f):
+   flvr = FLVReader(f)
+   flvr.parse_header()
+   return flvr.make_mkvb()
 
 def _main():
    import sys
    fn = sys.argv[1]
-   f = open(fn, 'rb')
-   flvr = FLVReader(f)
-   flvr.parse_header()
-   mb = flvr.make_mkvb()
+   mb = make_mkvb_from_file(open(fn, 'rb'))
    mb.set_writingapp('mcde_flv selftester pre-versioning version')
    mb.write_to_file(open(b'__flvdump.mkv.tmp', 'wb'))
    

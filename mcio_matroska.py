@@ -1543,6 +1543,17 @@ def _dump_elements(seq, depth=0):
             _dump_elements(element.sub, depth+1)
 
 
+def make_mkvb_from_file(f):
+   els = MatroskaElement.build_seq_from_file(f)
+   for el in els:
+      if (isinstance(el, MatroskaElementSegment)):
+         break
+   else:
+      raise ValueError('No segment in MKV file; got {0!a}.'.format(els))
+   
+   return el.make_mkvb()
+
+
 def _main():
    """Run module selftests."""
    from sys import argv
@@ -1556,13 +1567,8 @@ def _main():
    f = open(fn, 'rb')
    els = MatroskaElement.build_seq_from_file(f)
    _dump_elements(els)
-   for el in els:
-      if (isinstance(el, MatroskaElementSegment)):
-         break
-   else:
-      return
-   
-   mb = el.make_mkvb()
+   f.seek(0)
+   mb = make_mkvb_from_file(f)
    mb.set_writingapp('mcio_matroska self-test code, pre-versioning version')
    mb.write_to_file(open(b'__mkvdump.mkv.tmp', 'wb'))
    
