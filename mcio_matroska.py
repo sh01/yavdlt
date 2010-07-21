@@ -1127,6 +1127,10 @@ class MatroskaElementTitle(MatroskaElementStringUTF8):
    type = EBMLVInt(15273)
 
 @_mkv_type_reg
+class MatroskaElementLang(MatroskaElementStringASCII):
+   type = EBMLVInt(177564)
+
+@_mkv_type_reg
 class MatroskaElementCodec(MatroskaElementStringASCII):
    type = EBMLVInt(6)
 
@@ -1165,6 +1169,9 @@ class MatroskaCodec(str):
       CODEC_ID_MP2: 'A_MPEG/L2',
       CODEC_ID_MP3: 'A_MPEG/L3',
       CODEC_ID_VORBIS: 'A_VORBIS',
+      # subtitles
+      CODEC_ID_ASS: 'S_TEXT/ASS',
+      CODEC_ID_SSA: 'S_TEXT/SSA',
       # pseudo codecs
       CODEC_ID_MKV_MSC_VFW: 'V_MS/VFW/FOURCC',
       CODEC_ID_MKV_MSC_ACM: 'A_MS/ACM'
@@ -1241,7 +1248,11 @@ class MatroskaBuilder:
    TOFF_CLUSTER = 2**15
    #TLEN_CLUSTER = 2**15
    #TOFF_CLUSTER = 0
-   
+
+   TRACKTYPE_VIDEO = TRACKTYPE_VIDEO
+   TRACKTYPE_AUDIO = TRACKTYPE_AUDIO
+   TRACKTYPE_SUB = TRACKTYPE_SUB
+
    MS_CM_CLS_MAP = {
       TRACKTYPE_VIDEO: BitmapInfoHeader
    }
@@ -1405,7 +1416,7 @@ class MatroskaBuilder:
       tcs = round(10**9/sdiv/elmult)
       return (tcs, elmult, get_error(elmult))
 
-   def _build_track(self, ttype, codec, cid, default_dur, make_cues, ms_cm, track_name, *args, **kwargs):
+   def _build_track(self, ttype, codec, cid, default_dur, make_cues, ms_cm, track_name, track_lc, *args, **kwargs):
       """Build MatroskaElementTrackEntry structure and add to tracks."""
       track_num = len(self.tracks.sub) + 1
       
@@ -1436,7 +1447,7 @@ class MatroskaBuilder:
             cid2 += cid
          cid = cid2
          
-         mkv_codec = CODEC_ID2MKV[ms_cm_cls.WRAP_CODEC_ID]
+         mkv_codec = MatroskaCodec.CODEC_ID2MKV[ms_cm_cls.WRAP_CODEC_ID]
       
       sub_els = [
          MatroskaElementTrackNumber.new(track_num),
@@ -1452,6 +1463,9 @@ class MatroskaBuilder:
       
       if not (track_name is None):
          sub_els.append(MatroskaElementName.new(track_name))
+      
+      if not (track_lc is None):
+         sub_els.append(MatroskaElementLang.new(track_lc))
       
       if (ttype in self.settings_map):
          settings_cls = self.settings_map[ttype]
@@ -1486,9 +1500,9 @@ class MatroskaBuilder:
       self._add_track_data(track_num, data)
    
    def add_track(self, data, ttype, codec, codec_init_data, make_cues, *args, default_dur=None, ms_cm=MS_CM_AUTO,
-         track_name=None, **kwargs):
+         track_name=None, track_lang=None, **kwargs):
       """Add track to MKV structure."""
-      (track_num, track_entry) = self._build_track(ttype, codec, codec_init_data, default_dur, make_cues, ms_cm, track_name, *args, **kwargs)
+      (track_num, track_entry) = self._build_track(ttype, codec, codec_init_data, default_dur, make_cues, ms_cm, track_name, track_lang, *args, **kwargs)
       self._add_track_data(track_num, data)
    
    def sort_tracks(self):
