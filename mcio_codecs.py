@@ -60,6 +60,10 @@ def __init():
       'SPEEX',
       'VORBIS',
       
+      # Subtitle formats
+      'ASS',
+      'SSA',
+      
       # pseudo codecs: MKV
       'MKV_MSC_VFW',
       'MKV_MSC_ACM',
