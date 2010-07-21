@@ -24,6 +24,7 @@ import collections
 import html.parser
 import http.client
 import logging
+import os
 import os.path
 import urllib.request
 import re
@@ -266,6 +267,10 @@ class YTDefaultFmt:
 
 FMT_DEFAULT = YTDefaultFmt()
 
+DATATYPE_VIDEO = 1
+DATATYPE_TIMEDTEXT = 4
+DATATYPE_ANNOTATIONS = 8
+
 class YTVideoRef:
    re_tok = re.compile('&t=(?P<field_t>[^"&]+)&')
    re_title = re.compile('<link rel="alternate" +type="application/json\+oembed" +href="[^"]*" +title="(?P<text>.*?)" */>')
@@ -281,14 +286,21 @@ class YTVideoRef:
    logger = logging.getLogger('YTVideoRef')
    log = logger.log
    
-   MIME_EXT_MAP = {
+   MT_EXT_MAP = {
       'video/mp4': 'mp4',
       'video/3gpp': 'mp4',
       'video/x-flv': 'flv',
       'video/webm': 'webm'
    }
+   
+   MT_PARSERMODULE_MAP = {
+      'video/mp4': 'mcde_mp4',
+      'video/3gpp': 'mcde_mp4',
+      'video/x-flv': 'mcde_flv',
+      'video/webm': 'mcio_matroska'
+   }
 
-   def __init__(self, vid, format_pref_list):
+   def __init__(self, vid, format_pref_list, dl_path_tmp, dl_path_final, make_mkv):
       self.vid = vid
       self.tok = None
       self._mime_type = None
@@ -297,6 +309,11 @@ class YTVideoRef:
       self.got_video_info = False
       self.title = None
       self.fpl = format_pref_list
+      self.dlp_tmp = dl_path_tmp
+      self.dlp_final = dl_path_final
+      self._content_direct_url = None
+      self._fmt = None
+      self.make_mkv = make_mkv
    
    def mangle_yt_url(self, url):
       """This function will be called to preprocess any and all YT urls.
@@ -383,7 +400,22 @@ class YTVideoRef:
       
       self.fmt_url_map_update_markup(content)
    
-   def choose_fn(self, ext=None):
+   def _choose_tmp_fn(self, ext=None):
+      return os.path.join(self.dlp_tmp, self._choose_fn(ext) + '.tmp')
+   
+   def _choose_final_fn(self, ext=None):
+      if ((ext is None) and self.make_mkv):
+         ext = 'mkv'
+      
+      return os.path.join(self.dlp_final, self._choose_fn(ext))
+   
+   def _move_video(self, fn_tmp):
+      fn_final = self._choose_final_fn()
+      self.log(20, 'Moving finished movie file to {0!a}.'.format(fn_final))
+      os.rename(fn_tmp, fn_final)
+      return fn_final
+   
+   def _choose_fn(self, ext=None):
       title = self.title
       mtitle = ''
       for c in title:
@@ -393,14 +425,57 @@ class YTVideoRef:
             mtitle += '_'
       
       if (ext is None):
-         ext = self.MIME_EXT_MAP.get(self._mime_type,'bin')
+         ext = self.MT_EXT_MAP.get(self._mime_type,'bin')
       
-      return 'yt_{0}_{1}.{2}'.format(self.vid, mtitle, ext)
+      return 'yt_{0}.[{1}][{2}].{3}'.format(mtitle, self.vid, self._fmt, ext)
    
-   def fetch_data(self):
-      self.fetch_video()
-      self.fetch_annotations()
-      self.fetch_tt()
+   def fetch_data(self, dtm):
+      # Need to determine preferred format first.
+      self.pick_video()
+      
+      if (self.make_mkv and os.path.exists(self._choose_final_fn())):
+         # MKV files are only written once we have retrieved all the data for this video; so if one for this video exists
+         # already, we can safely skip it.
+         # TODO: What about updated remote A/V/S data? Are changes to AV data even allowed by YT?
+         self.log(20, 'Local final file {0!r} exists already; skipping this download.'.format(self._choose_final_fn()))
+         return
+      
+      if (dtm & DATATYPE_VIDEO):
+         if (os.path.exists(self._choose_final_fn())):
+            # We might still need new subs, however, so only cancel AV data download here.
+            self.log(20, 'Local final file {0!r} exists already; skipping this download.'.format(self._choose_final_fn()))
+         else:
+            vf = self.fetch_video()
+            if (self.make_mkv):
+               vf.seek(0)
+               modname = self.MT_PARSERMODULE_MAP[self._mime_type]
+               pmod = __import__(modname)
+               mkvb = pmod.make_mkvb_from_file(vf)
+            else:
+               self._move_video(vf.name)
+      
+      elif (self.make_mkv):
+         # Sub only MKV files; kinda a weird case, but let's support it anyway.
+         from mcio_matroska import MatroskaBuilder
+         mkvb = MatroskaBuilder(1000000, None)
+      
+      if (dtm & DATATYPE_ANNOTATIONS):
+         #TODO mkv muxing ...
+         self.fetch_annotations()
+      
+      if (dtm & DATATYPE_TIMEDTEXT):
+         # TODO mkv muxing ...
+         self.fetch_tt()
+         
+      if (self.make_mkv):
+         fn_out = self._choose_tmp_fn('mkv')
+         self.log(20, 'Writing MKV data to file.')
+         f_out = open(fn_out, 'w+b')
+         mkvb.write_to_file(f_out)
+         f_out.close()
+         self._move_video(fn_out)
+         # MKV write cycle is finished; remove the raw video file.
+         os.unlink(vf.name)
    
    def fetch_video(self):
       from fcntl import fcntl, F_SETFL
@@ -414,7 +489,7 @@ class YTVideoRef:
       if (url is None):
          raise YTError('Unable to pick video fmt; bailing out.')
       
-      fn_out = self.choose_fn()
+      fn_out = self._choose_tmp_fn()
       try:
          f = open(fn_out, 'r+b')
       except IOError:
@@ -425,8 +500,8 @@ class YTVideoRef:
       if (flen > self._content_length):
          raise YTError('Existing local file longer than remote version; not attempting to retrieve.')
       elif (flen == self._content_length):
-         self.log(20, 'Local file {0!r} appears to be complete already.'.format(fn_out, url))
-         return
+         self.log(20, 'Local temporary file {0!r} appears to be complete already.'.format(fn_out))
+         return f
          
       self.log(20, 'Fetching data from {0!r}.'.format(url))
       
@@ -468,7 +543,6 @@ class YTVideoRef:
          f.seek(0)
          f.truncate()
       
-      
       self.log(20, 'Total length is {0} bytes.'.format(cl))
       
       cl_g = off_start
@@ -494,7 +568,7 @@ class YTVideoRef:
          raise YTError("Prematurely lost DL connection; expected {0} bytes, got {1}.".format(self._content_length, cl_g))
       
       f.truncate()
-      f.close()
+      return f
    
    def fetch_annotations(self):
       url = self.url_get_annots()
@@ -507,7 +581,7 @@ class YTVideoRef:
          self.log(20, 'There are no annotations for this video.')
          return
       
-      fn_out = self.choose_fn('ssa')
+      fn_out = self._choose_tmp_fn('ssa')
       self.log(20, 'Received {0:d} annotations; writing to {1!a}.'.format(len(annotations), fn_out))
       f = open(fn_out, 'wb')
       dump_ytannos_ssa(annotations, f)
@@ -531,7 +605,7 @@ class YTVideoRef:
       for ((name, lc, ttel)) in tdata:
          lc = lc.replace('/', '').replace('\x00','')
          name = name.replace('/', '').replace('\x00','')
-         fn = self.choose_fn('{0}_{1}.ssa'.format(lc, name))
+         fn = self._choose_fn('{0}_{1}.ssa'.format(lc, name))
          self.log(20, 'Writing timedtext data for name {0!a}, lc {1} to {2}.'.format(name, lc, fn))
          if (isinstance(fn, str)):
             fn = fn.encode('utf-8')
@@ -574,8 +648,11 @@ class YTVideoRef:
       ums = unquote(ums_raw)
       self.fmt_url_map_update(ums)
    
-   def pick_video(self):
+   def pick_video(self, cache_ok=True):
       from urllib.parse import splittype, splithost
+      
+      if (cache_ok and self._content_direct_url):
+         return self._content_direct_url
       
       for fmt in self.fpl:
          url = self.get_video_url(fmt)
@@ -603,7 +680,9 @@ class YTVideoRef:
             if not (content_length is None):
                self.log(20, 'Fmt {0} is good ... using that.'.format(fmt))
                self._mime_type = mime_type
+               self._fmt = fmt
                self._content_length = content_length
+               self._content_direct_url = url
                return url
          
          self.log(20, 'Tried to get video in fmt {0} and failed (http response {1!a}).'.format(fmt, rc))
@@ -741,9 +820,9 @@ class Config:
    log = logger.log
    
    _dt_map = dict(
-      v='fetch_video',
-      a='fetch_annotations',
-      t='fetch_tt'
+      v=DATATYPE_VIDEO,
+      a=DATATYPE_ANNOTATIONS,
+      t=DATATYPE_TIMEDTEXT
    )
    config_fn_default = '~/.yavdlt/config'
    
@@ -755,6 +834,8 @@ class Config:
    dtype = ''.join(_dt_map.keys())
    config_fn = None
    list_url_manglers = False
+   dl_path_temp = '.'
+   dl_path_final = '.'
    
    def __init__(self):
       self._url_manglers = {}
@@ -762,6 +843,7 @@ class Config:
       self._default_fpl = (22, 35, 34, 18, 5, FMT_DEFAULT)
       self._args = None
       
+      self.make_mkv = False
       self.fpl = None
       self.fmt = None
       self.url_mangler = None
@@ -835,6 +917,7 @@ class Config:
       oa('--playlist', help='Parse (additional) video ids from specified playlist', metavar='PLAYLIST_ID')
       oa('--list-url-manglers', dest='list_url_manglers', action='store_true', help='Print lists of known URL manglers and exit')
       oa('--url-mangler', '-u', dest='url_mangler', metavar='UMNAME', help='Fetch metadata pages through specified HTTP gateway')
+      oa('--mkv', '-m', dest='make_mkv', action='store_true', help='Mux downloaded data (AV+Subs) into MKV file.')
       oa('-q', '--quiet', dest='loglevel', action='store_const', const=30, help='Limit output to errors.')
       
       rv = op.parse_args()
@@ -887,6 +970,12 @@ class Config:
          return rv
       
       return self._default_fpl
+   
+   def _get_dtypemask(self):
+      rv = 0
+      for c in self.dtype:
+         rv |= self._dt_map[c]
+      return rv
 
 
 def main():
@@ -920,10 +1009,12 @@ def main():
    vids_failed = []
    
    fpl = conf._get_fpl()
-   
+
+   dtypemask = conf._get_dtypemask()
+
    for vid in vids:
       log(20, 'Fetching data for video with id {0!a}.'.format(vid))
-      ref = YTVideoRef(vid, fpl)
+      ref = YTVideoRef(vid, fpl, conf.dl_path_temp, conf.dl_path_final, conf.make_mkv)
       
       if not (um is None):
          ref.mangle_yt_url = um
@@ -936,8 +1027,7 @@ def main():
          vids_failed.append(vid)
          continue         
       
-      for c in conf.dtype:
-         getattr(ref,conf._dt_map[c])()
+      ref.fetch_data(dtypemask)
    
    if (vids_failed):
       log(30, 'Failed to retrieve videos: {0}.'.format(vids_failed))
