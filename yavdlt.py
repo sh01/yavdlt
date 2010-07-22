@@ -628,7 +628,7 @@ class YTVideoRef:
       
       m = self.re_title.search(content)
       if (m is None):
-         self.log(30, 'Unable to extract video title; this probably indicates a yt_getter bug.')
+         self.log(30, 'Unable to extract video title; this probably indicates a yavdlt bug.')
          self.title = '--untitled--'
       else:
          self.title = m.groupdict()['text']
