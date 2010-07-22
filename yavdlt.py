@@ -170,7 +170,6 @@ class ASSSubtitle:
       return self.text.replace('\n','\\N')
    
    def _get_name(self):
-      return ''
       if (self.name is None):
          return ''
       return self.name.replace('\n','_').replace(',','_').replace('\x00','_')
