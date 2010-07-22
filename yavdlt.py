@@ -490,6 +490,9 @@ class YTimedTextList:
          req = urllib.request.urlopen(url)
          content = req.read()
          
+         if (name == ''):
+            name = None
+         
          if (lc == ''):
             lc2 = None
          else:
@@ -696,7 +699,7 @@ class YTVideoRef:
          mkvb = MatroskaBuilder(1000000, None)
       
       if (self.make_mkv):
-         file_title = 'Youtube video {0!a}({1:d}): {2}.'.format(self.vid, self._fmt, self.title)
+         file_title = 'Youtube video {0!a}({1:d}): {2}'.format(self.vid, self._fmt, self.title)
          mkvb.set_segment_title(file_title)
          if (dtm & DATATYPE_VIDEO):
             mkvb.set_track_name(0, file_title)
