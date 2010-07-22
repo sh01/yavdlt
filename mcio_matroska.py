@@ -496,6 +496,7 @@ class MatroskaElementStringBase(MatroskaElement):
    def __init__(self, etype, val):
       super().__init__(etype)
       self.val = val
+      val.encode(self.codec)
 
    def __deepcopy__(self, mdict):
       return type(self)(self.type, deepcopy(self.val,mdict))
@@ -1115,7 +1116,7 @@ class MatroskaElementMuxingApp(MatroskaElementStringASCII):
    type = EBMLVInt(3456)
 
 @_mkv_type_reg
-class MatroskaElementName(MatroskaElementStringASCII):
+class MatroskaElementName(MatroskaElementStringUTF8):
    type = EBMLVInt(4974)
 
 @_mkv_type_reg
@@ -1291,6 +1292,12 @@ class MatroskaBuilder:
    
    def set_writingapp(self, write_app):
       self.mkv_info.set_sub(MatroskaElementWritingApp.new(write_app))
+   
+   def set_segment_title(self, title):
+      self.mkv_info.set_sub(MatroskaElementTitle.new(title))
+      
+   def set_track_name(self, tid, name):
+      self.tracks.sub[tid].set_sub(MatroskaElementName.new(name))
    
    def _get_muxapp(self):
       return 'yt_getter.mcio_matroska pre-versioning-version'
