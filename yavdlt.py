@@ -64,7 +64,7 @@ class ASSStyle:
       ('fontsize', 'Fontsize', 20, _fvc_int),
       ('color1', 'PrimaryColour', make_ass_color(255,255,255,0), _fvc_int),
       ('color2', 'SecondaryColour', make_ass_color(223,223,223,0), _fvc_int),
-      ('color3', 'OutlineColour', make_ass_color(191,191,191,0), _fvc_int),
+      ('color3', 'OutlineColour', make_ass_color(0,0,0,0), _fvc_int),
       ('color_bg', 'BackColour', make_ass_color(0,0,0,0), _fvc_int),
       ('fs_bold', 'Bold', False, _fvc_bool),
       ('fs_italic', 'Italic', False, _fvc_bool),
@@ -74,8 +74,8 @@ class ASSStyle:
       ('scale_y', 'ScaleY', 1, _fvc_perc),
       ('spacing', 'Spacing', 0, _fvc_int),
       ('angle', 'Angle', 0, _fvc_float),
-      ('borderstyle', 'Borderstyle', 0, _fvc_int),
-      ('outline', 'Outline', 0, _fvc_int),
+      ('borderstyle', 'Borderstyle', 1, _fvc_int),
+      ('outline', 'Outline', 2, _fvc_int),
       ('shadow', 'Shadow', 0, _fvc_int),
       ('alignment', 'Alignment', 2, _fvc_int),
       ('margin_l', 'MarginL', 0, _fvc_int),
@@ -327,15 +327,16 @@ class YTAnnotationAppearence(YTAnnotationAppearanceBase):
    
    def get_style(self):
       color1 = int(self.fgColor, 16)
-      color3 = int(self.borderColor, 16)
-      if not (color3 is None):
-         color3 |= round(float(self._get_num('borderAlpha'))*255) << 24
       
-      color_bg = int(self.bgColor, 16)
-      if not (color_bg is None):
-         color_bg |= round(float(self._get_num('bgAlpha'))*255) << 24
+      #color3 = int(self.borderColor, 16)
+      #if not (color3 is None):
+         #color3 |= round(float(1-self._get_num('borderAlpha'))*255) << 24
       
-      return dict(color1=color1, color3=color3, color_bg=color_bg)
+      #color_bg = int(self.bgColor, 16)
+      #if not (color_bg is None):
+         #color_bg |= round(float(1-self._get_num('bgAlpha'))*255) << 24
+      
+      return dict(color1=color1)
 
 
 YTAnnotationBase = collections.namedtuple('YTAnnotationBase', ('id','author','type','content', 'style', 'r1', 'r2', 'appearance', 'yt_spam_score', 'yt_spam_flag', 'urls'))
