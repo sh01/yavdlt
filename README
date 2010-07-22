@@ -10,6 +10,7 @@ if there's any decent way to get at a YT video, TAVDLT should allow you to do
 it without unnecessary pain.
 In addition, YAVDLT has a larger feature set than most similar tools; currently,
 its feature set includes:
+
   * Downloading Audio/Video files, in any format supported by YT.
 
   * Downloading TimedText data and converting it to the SSA subtitle format,
@@ -35,6 +36,8 @@ its feature set includes:
 
   * Support for downloading all videos from a playlist
 
+  * Resuming video file downloads that were interrupted for any reason.
+
   * Detailed download progress reports.
 
 ==== System requirements ====
@@ -55,12 +58,13 @@ any of these work:
 To download all videos from a playlist:
  ./yavdlt.py --playlist CDFEA6D52E5CC0EC
 
-To force a specific video format:
+To force a video in a specific youtube format:
  ./yavdlt.py --fmt 18 dhRUe-gz690
 
 To mux downloaded AV and sub data into MKV files:
  ./yavdlt.py --mkv grCTXGW3sxQ
 
+Naturally, --help is also supported.
 
 ==== Config ====
 A config file isn't necessary for YTAVDLT use, but using one allows you to
