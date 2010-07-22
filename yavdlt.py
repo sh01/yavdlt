@@ -686,6 +686,7 @@ class YTVideoRef:
                modname = self.MT_PARSERMODULE_MAP[self._mime_type]
                pmod = __import__(modname)
                mkvb = pmod.make_mkvb_from_file(vf)
+               mkvb.sort_tracks()
             else:
                self._move_video(vf.name)
       
@@ -693,6 +694,12 @@ class YTVideoRef:
          # Sub only MKV files; kinda a weird case, but let's support it anyway.
          from mcio_matroska import MatroskaBuilder
          mkvb = MatroskaBuilder(1000000, None)
+      
+      if (self.make_mkv):
+         file_title = 'Youtube video {0!a}({1:d}): {2}.'.format(self.vid, self._fmt, self.title)
+         mkvb.set_segment_title(file_title)
+         if (dtm & DATATYPE_VIDEO):
+            mkvb.set_track_name(0, file_title)
       
       if (dtm & DATATYPE_ANNOTATIONS):
          (annotations, sts) = self.fetch_annotations()
@@ -837,7 +844,7 @@ class YTVideoRef:
          return (None, None)
       
       annotations.sort()
-      rv = ASSSubSet()
+      rv = ASSSubSet('annotations')
       rv.add_subs_from_yt_annotations(annotations)
       return (annotations, rv)
    
