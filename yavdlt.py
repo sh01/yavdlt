@@ -239,9 +239,9 @@ class ASSSubSet:
       for sub in subs:
          self.subs.append(sub)
 
-   def add_subs_from_yt_annotations(self, annotations):
+   def add_subs_from_yt_annotations(self, annotations, **kwargs):
       for anno in annotations:
-         sub = anno.get_sub(self.make_style)
+         sub = anno.get_sub(self.make_style, **kwargs)
          if not (sub is None):
             self.subs.append(sub)
 
@@ -407,7 +407,7 @@ class YTAnnotation(YTAnnotationBase):
       
       return dict()
    
-   def get_sub(self, style_maker):
+   def get_sub(self, style_maker, filter_spam=False):
       if ((self.content is None) or
          (self.r1 is None) or
          (self.r2 is None) or
@@ -416,7 +416,7 @@ class YTAnnotation(YTAnnotationBase):
          # Non-sublike annotation
          return None
       
-      if (self.is_spam()):
+      if (filter_spam and self.is_spam()):
          # We can do without this.
          return None
       
@@ -704,22 +704,30 @@ class YTVideoRef:
             mkvb.set_track_name(0, file_title)
       
       if (dtm & DATATYPE_ANNOTATIONS):
-         (annotations, sts) = self.fetch_annotations()
-         if (sts is None):
+         (annotations, sts_raw, sts_nospam) = self.fetch_annotations()
+         if (sts_raw is None):
             pass
-         elif (len(sts.subs) == 0):
+         elif (len(sts_raw.subs) == 0):
             self.log(20, 'Received {0:d} annotations, but none appear sublike. :('.format(len(annotations)))
          else:
             if (self.make_mkv):
-               self.log(20, 'Received {0:d}(/{1:d}) sublike annotations; muxing into MKV.'.format(len(sts.subs), len(annotations)))
-               sts.mkv_add_track(mkvb)
+               self.log(20, 'Received {0:d}(/{1:d}) ({2:d} nospam) sublike annotations; muxing into MKV.'.format(len(sts_raw.subs), len(annotations), len(sts_nospam.subs)))
+               sts_raw.mkv_add_track(mkvb)
+               sts_nospam.mkv_add_track(mkvb)
             else:
                fn_out = self._choose_final_fn('ass')
-               self.log(20, 'Received {0:d}(/{1:d}) sublike annotations; writing to {2!a}.'.format(len(sts.subs), len(annotations), fn_out))
+               self.log(20, 'Received {0:d}(/{1:d}) sublike annotations; writing to {2!a}.'.format(len(sts_raw.subs), len(annotations), fn_out))
                f = open(fn_out, 'wb')
-               sts.write_to_file(f)
+               sts_raw.write_to_file(f)
                f.close()
-      
+               if (sts_nospam.subs):
+                  fn_out = self._choose_final_fn('nospam.ass')
+                  self.log(20, 'Received {0:d}(/{1:d}) nospam sublike annotations; writing to {2!a}.'.format(len(sts_nospam.subs), len(annotations), fn_out))
+                  f = open(fn_out, 'wb')
+                  sts_nospam.write_to_file(f)
+                  f.close()
+
+
       if (dtm & DATATYPE_TIMEDTEXT):
          ttd = self.fetch_tt()
          if not (ttd is None):
@@ -843,12 +851,14 @@ class YTVideoRef:
       annotations = parse_ytanno(BytesIO(content))
       if (len(annotations) < 1):
          self.log(20, 'There are no annotations for this video.')
-         return (None, None)
+         return (None, None, None)
       
       annotations.sort()
-      rv = ASSSubSet('annotations')
-      rv.add_subs_from_yt_annotations(annotations)
-      return (annotations, rv)
+      sts_raw = ASSSubSet('annotations (unfiltered)')
+      sts_raw.add_subs_from_yt_annotations(annotations)
+      sts_nospam = ASSSubSet('annotations (spam filtered)')
+      sts_nospam.add_subs_from_yt_annotations(annotations, filter_spam=True)
+      return (annotations, sts_raw, sts_nospam)
    
    def fetch_tt(self):
       url = self.mangle_yt_url('http://video.google.com/timedtext?v={0}&type=list'.format(self.vid))
