@@ -702,7 +702,7 @@ class YTVideoRef:
             if (self.make_mkv):
                self.log(20, 'Received {0:d}(/{1:d}) sublike annotations; muxing into MKV.'.format(len(sts.subs), len(annotations)))
                sts.mkv_add_track(mkvb)
-            elif 1: #HACK: Force this until annotation subs in mkv files actually work.
+            if 1: #HACK: Force this until annotation subs in mkv files actually work.
                fn_out = self._choose_final_fn('ass')
                self.log(20, 'Received {0:d}(/{1:d}) sublike annotations; writing to {2!a}.'.format(len(sts.subs), len(annotations), fn_out))
                f = open(fn_out, 'wb')
