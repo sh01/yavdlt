@@ -21,6 +21,7 @@ if (sys.version_info[0] < 3):
    raise Exception("This is a python 3 script; it's not compatible with older interpreters.")
 
 import collections
+from collections import deque, OrderedDict
 import html.parser
 import http.client
 import logging
@@ -34,10 +35,251 @@ from io import BytesIO
 
 xml_unescape = html.parser.HTMLParser().unescape
 
-YTAnnotationRRBase = collections.namedtuple('YTAnnotationRR', ('t','x','y','w','h','d'))
-YTAnnotationBase = collections.namedtuple('YTAnnotationBase', ('id','author','type','content', 'style','r1','r2'))
+
+# ---------------------------------------------------------------- ASS sub building code
+def make_ass_color(r,g,b,a):
+   for val in (r,g,b,a):
+      if (val > 255):
+         raise ValueError('Value {0} from args {1} is invalid; expected something in range [0,255].'.format(val, (r,g,b,a)))
+   
+   return (a << 24) + (r << 16) + (g << 8) + b
+
+# ASSStyle helper function; defined here because of python 3.x class scope quirks.
+def _fe_make(a,b,c=None,d=lambda b:b, *, __FE=collections.namedtuple('FieldEntry', ('name', 'ass_name', 'default_val', 'fvc'))):
+   return __FE(a,b,c,d)
+
+class ASSStyle:
+   # field entry type
+
+   # Field value output converters
+   _fvc_bool = (lambda b: '{0:d}'.format(-1*b))
+   _fvc_int = '{0:d}'.format
+   _fvc_float = '{0:f}'.format
+   _fvc_perc = (lambda p: '{0:.2f}'.format(p*100))
+   
+   # Field entries
+   fields = [_fe_make(*x) for x in (
+      ('name', 'Name'),
+      ('fontname', 'Fontname', None),
+      ('fontsize', 'Fontsize', 20, _fvc_int),
+      ('color1', 'PrimaryColour', make_ass_color(255,255,255,0), _fvc_int),
+      ('color2', 'SecondaryColour', make_ass_color(223,223,223,0), _fvc_int),
+      ('color3', 'OutlineColour', make_ass_color(191,191,191,0), _fvc_int),
+      ('color_bg', 'BackColour', make_ass_color(0,0,0,0), _fvc_int),
+      ('fs_bold', 'Bold', False, _fvc_bool),
+      ('fs_italic', 'Italic', False, _fvc_bool),
+      ('fs_underline', 'Underline', False, _fvc_bool),
+      ('fs_strikeout', 'Strikeout', False, _fvc_bool),
+      ('scale_x', 'ScaleX', 1, _fvc_perc),
+      ('scale_y', 'ScaleY', 1, _fvc_perc),
+      ('spacing', 'Spacing', 0, _fvc_int),
+      ('angle', 'Angle', 0, _fvc_float),
+      ('borderstyle', 'Borderstyle', 0, _fvc_int),
+      ('outline', 'Outline', 0, _fvc_int),
+      ('shadow', 'Shadow', 0, _fvc_int),
+      ('alignment', 'Alignment', 2, _fvc_int),
+      ('margin_l', 'MarginL', 0, _fvc_int),
+      ('margin_r', 'MarginR', 0, _fvc_int),
+      ('margin_v', 'MarginV', 10, _fvc_int),
+      ('encoding', 'Encoding', 1, _fvc_int)
+   )]
+   
+   ASS_FIELD_NAMES = tuple(x.ass_name for x in fields)
+   field_map = dict((x.name,x) for x in fields)
+   
+   def __init__(self, name, **kwargs):
+      self.name = name
+      for (key, val) in kwargs.items():
+         if not (key in self.field_map):
+            raise ValueErrror('Unknown argument {0!a}={1!a}.'.format(key, val))
+         setattr(self, key, val)
+      
+      for f in self.field_map.values():
+         if hasattr(self, f.name):
+            continue
+         setattr(self, f.name, f.default_val)
+   
+   def _get_values(self):
+      for field in self.fields:
+         val = getattr(self, field.name)
+         if (val is None):
+            yield ''
+         else:
+            yield field.fvc(val)
+   
+   def fmt_as_ass_line(self):
+      return 'Style: {0}'.format(','.join(self._get_values()))
+      
+   def get_values(self):
+      return tuple(getattr(self, f.name) for f in self.fields if (f.name != 'name'))
+      
+del(_fe_make)
+
+def _second2ass_ts(seconds):
+   hours = int(seconds//3600)
+   seconds %= 3600
+   minutes = int(seconds//60)
+   seconds %= 60
+   return '{0:d}:{1:02d}:{2:05.2f}'.format(hours, minutes, seconds)
 
 
+class ASSSubtitle:
+   layer = 0
+   name = None
+   margin_l = 0
+   margin_r = 0
+   margin_v = 0
+   
+   def __init__(self, start, dur, text, style):
+      self.start = start
+      self.dur = dur
+      self.text = text
+      self.style = style
+   
+   @classmethod
+   def new(cls, style_maker, *args, **kwargs):
+      return cls(*args, style=style_maker(), **kwargs)
+   
+   def __cmp__(self, other):
+      if (self.start < other.start): return -1
+      if (self.start > other.start): return 1
+      if (self.dur < other.dur): return -1
+      if (self.dur > other.dur): return 1
+      if (self.name < other.name): return -1
+      if (self.name > other.name): return 1
+      if (self.text < other.text): return -1
+      if (self.text > other.text): return 1
+      if (id(self) < id(other)): return -1
+      if (id(self) > id(other)): return 1
+      return 0
+
+   def __eq__(self, other):
+      return (self.__cmp__(other) == 0)
+   def __ne__(self, other):
+      return (self.__cmp__(other) != 0)
+   def __lt__(self, other):
+      return (self.__cmp__(other) < 0)
+   def __gt__(self, other):
+      return (self.__cmp__(other) > 0)
+   def __le__(self, other):
+      return (self.__cmp__(other) <= 0)
+   def __ge__(self, other):
+      return (self.__cmp__(other) >= 0)
+
+   def _get_body(self):
+      return self.text.replace('\n','\\N')
+   
+   def _get_name(self):
+      return ''
+      if (self.name is None):
+         return ''
+      return self.name.replace('\n','_').replace(',','_').replace('\x00','_')
+   
+   ASS_FIELD_NAMES = ('Layer', 'Start', 'End', 'Style', 'Name', 'MarginL', 'MarginR', 'MarginV', 'Effect', 'Text')
+   def get_line_ass_standalone(self):
+      """Return line for this sub as it would appear in a standalone ASS file."""
+      return 'Dialogue: ' + ','.join(str(x) for x in (self.layer,_second2ass_ts(self.start),
+         _second2ass_ts(self.start+self.dur), self.style.name, self._get_name(), self.margin_l, self.margin_r, self.margin_v, '',
+         self._get_body()))
+   
+   def get_line_ass_mkv(self, ro):
+      """Return line for this sub as it would appear in a data block in a MKV file."""
+      return ','.join(str(x) for x in (ro, self.layer, self.style.name, self._get_name(), self.margin_l,
+         self.margin_r, self.margin_v, '', self._get_body()))
+      
+
+class ASSSubSet:
+   style_cls = ASSStyle   
+   def __init__(self, name=None, lc=None):
+      self.subs = []
+      self.styles = OrderedDict()
+      self._style_i = 0
+      self.name = name
+      if (lc is None):
+         lc = 'und'
+      self.lc = lc
+   
+   def _get_style_name(self):
+      rv = 'Style{0:d}'.format(self._style_i)
+      self._style_i += 1
+      return rv
+   
+   def make_style(self, *args, **kwargs):
+      style = self.style_cls(None, *args, **kwargs)
+      key = style.get_values()
+      try:
+         rv = self.styles[key]
+      except KeyError:
+         rv = style
+         rv.name = self._get_style_name()
+         self.styles[key] = rv
+      return rv
+      
+   def add_subs_from_yt_tt(self, content):
+      dom = xml.dom.minidom.parseString(content)
+      subs = deque()
+      for node in dom.getElementsByTagName('text'):
+         if (node.firstChild is None):
+            text = ''
+         else:
+            text = xml_unescape(node.firstChild.nodeValue)
+         
+         try:
+            dur = float(node.attributes['dur'].value)
+         except KeyError:
+            # This is very rare, and I have no idea what the actual meaning
+            # of this construct is. Defaulting to 0 until we get a better
+            # understanding of this case.
+            dur = 0.0
+         subs.append(ASSSubtitle.new(
+            self.make_style,
+            float(node.attributes['start'].value),
+            dur,
+            text
+         ))
+      for sub in subs:
+         self.subs.append(sub)
+
+   def add_subs_from_yt_annotations(self, annotations):
+      for anno in annotations:
+         sub = anno.get_sub(self.make_style)
+         if not (sub is None):
+            self.subs.append(sub)
+
+   def _get_header(self):
+      return b'\r\n'.join((
+         b'\xef\xbb\xbf[Script Info]', # Include UTF-8 BOM; according to user reports some players care about this
+         b'ScriptType: v4.00+',
+         b'\r\n[V4+ Styles]',
+         'Format: {0}'.format(', '.join(self.style_cls.ASS_FIELD_NAMES)).encode('utf-8')
+       ) + tuple(style.fmt_as_ass_line().encode('utf-8') for style in self.styles.values()) + (b'',))
+   
+   def _get_header2(self, fn):
+      return b''.join((b'\r\n[Events]\r\nFormat: ', ', '.join(fn).encode('utf-8'), b'\r\n\r\n'))
+   
+   def write_to_file(self, f):
+      f.write(self._get_header())
+      f.write(self._get_header2(ASSSubtitle.ASS_FIELD_NAMES))
+      for sub in self.subs:
+         f.write(sub.get_line_ass_standalone().encode('utf-8'))
+         f.write(b'\r\n')
+   
+   def _iter_subs_mkv(self, tcs):
+      from mcio_base import DataRefBytes
+      cf = 10**9/tcs
+      i = 1
+      for sub in self.subs:
+         data_r = DataRefBytes(sub.get_line_ass_mkv(i).encode('utf-8'))
+         yield (int(sub.start*cf), int(sub.dur*cf), data_r, True)
+         i += 1
+   
+   def mkv_add_track(self, mkvb):
+      from mcio_codecs import CODEC_ID_ASS
+      cpd = self._get_header() + self._get_header2(ASSSubtitle.ASS_FIELD_NAMES)
+      mkvb.add_track(self._iter_subs_mkv(mkvb.tcs), mkvb.TRACKTYPE_SUB, CODEC_ID_ASS, cpd, False, track_name=self.name, track_lang=self.lc)
+
+
+YTAnnotationRRBase = collections.namedtuple('YTAnnotationRRBase', ('t','x','y','w','h','d'))
 class YTAnnotationRR(YTAnnotationRRBase):
    @classmethod
    def build_from_xmlnode(cls, node):
@@ -60,15 +302,42 @@ class YTAnnotationRR(YTAnnotationRRBase):
          kwargs[name] = nval
       return cls(**kwargs)
 
+YTAnnotationAppearanceBase = collections.namedtuple('YTAnnotationAppearance', ('fgColor', 'bgColor', 'borderColor',
+   'borderWidth', 'bgAlpha', 'borderAlpha', 'gloss', 'highlightFontColor', 'highlightWidth'))
 
-def _second2ssa_ts(seconds):
-   hours = int(seconds//3600)
-   seconds %= 3600
-   minutes = int(seconds//60)
-   seconds %= 60
-   return '{0:d}:{1:02d}:{2:05.2f}'.format(hours, minutes, seconds)
+class YTAnnotationAppearence(YTAnnotationAppearanceBase):
+   @classmethod
+   def build_from_xmlnode(cls, node):
+      kwargs = {}
+      for name in cls._fields:
+         try:
+            kwargs[name] = node.attributes[name].nodeValue
+         except KeyError:
+            kwargs[name] = None
+            continue
+
+      return cls(**kwargs)
    
+   def _get_num(self, name, base=None):
+      val = getattr(self, name)
+      if (val is None):
+         return 0
+      return val
+   
+   def get_style(self):
+      color1 = int(self.fgColor, 16)
+      color3 = int(self.borderColor, 16)
+      if not (color3 is None):
+         color3 |= round(float(self._get_num('borderAlpha'))*255) << 24
+      
+      color_bg = int(self.bgColor, 16)
+      if not (color_bg is None):
+         color_bg |= round(float(self._get_num('bgAlpha'))*255) << 24
+      
+      return dict(color1=color1, color3=color3, color_bg=color_bg)
 
+
+YTAnnotationBase = collections.namedtuple('YTAnnotationBase', ('id','author','type','content', 'style', 'r1', 'r2', 'appearance', 'yt_spam_score', 'yt_spam_flag', 'urls'))
 class YTAnnotation(YTAnnotationBase):
    @classmethod
    def build_from_xmlnode(cls, node):
@@ -104,46 +373,58 @@ class YTAnnotation(YTAnnotationBase):
       else:
          kwargs['content'] = None
       
+      atags = node.getElementsByTagName('appearance')
+      if (atags):
+         kwargs['appearance'] = YTAnnotationAppearence.build_from_xmlnode(atags[0])
+      else:
+         kwargs['appearance'] = None
+      
+      kwargs['urls'] = urls = []
+      for actt in node.getElementsByTagName('action'):
+         for urlt in actt.getElementsByTagName('url'):
+            try:
+               urls.append(urlt.attributes['value'].value)
+            except KeyError:
+               pass
+      
+      kwargs['yt_spam_score'] = None
+      kwargs['yt_spam_flag'] = False
+      for mdn in node.getElementsByTagName('metadata'):
+         if ('yt_spam_score' in mdn.attributes):
+            kwargs['yt_spam_score'] = float(mdn.attributes['yt_spam_score'].value)
+         if ('yt_spam_flag' in mdn.attributes):
+            kwargs['yt_spam_flag'] = (mdn.attributes['yt_spam_flag'].value == 'true')
+      
       return cls(**kwargs)
    
-   def fmt_ssa(self):
-      return 'Dialogue: 0,{0},{1},Default,,0000,0000,0000,,{2}'.format(
-         _second2ssa_ts(self.r1.t),
-         _second2ssa_ts(self.r2.t),
-         self.content.replace('\n', '\\N')
-      )
+   def is_spam(self):
+      return (self.yt_spam_flag)
    
-   def __cmp__(self, other):
-      if (self.r1 < other.r1): return -1
-      if (self.r1 > other.r1): return 1
-      if (self.r2 < other.r2): return -1
-      if (self.r2 > other.r2): return 1
-      if (id(self) < id(other)): return -1
-      if (id(self) > id(other)): return 1
-      return 0
+   def _get_style_kwargs(self):
+      if (self.appearance):
+         return self.appearance.get_style()
+      
+      return dict()
    
-   def is_sublike(self):
-      return not (
-         (self.content is None) or
+   def get_sub(self, style_maker):
+      if ((self.content is None) or
          (self.r1 is None) or
          (self.r2 is None) or
          (self.r1.t is None) or
-         (self.r2.t is None)
-      )
-   
-   def __eq__(self, other):
-      return (self.__cmp__(other) == 0)
-   def __ne__(self, other):
-      return (self.__cmp__(other) != 0)
-   def __lt__(self, other):
-      return (self.__cmp__(other) < 0)
-   def __gt__(self, other):
-      return (self.__cmp__(other) > 0)
-   def __le__(self, other):
-      return (self.__cmp__(other) <= 0)
-   def __ge__(self, other):
-      return (self.__cmp__(other) >= 0)
-
+         (self.r2.t is None)):
+         # Non-sublike annotation
+         return None
+      
+      if (self.is_spam()):
+         # We can do without this.
+         return None
+      
+      style = style_maker(**self._get_style_kwargs())
+      
+      rv = ASSSubtitle(self.r1.t, self.r2.t-self.r1.t, self.content, style)
+      if not (self.author is None):
+         rv.name = self.author
+      return rv
 
 def parse_ytanno(f):
    import xml.dom.minidom
@@ -153,27 +434,33 @@ def parse_ytanno(f):
    annotations.sort()
    return annotations
 
+# ---------------------------------------------------------------- Youtube interface code
+class YTError(Exception):
+   pass
 
-def dump_ytannos_ssa(annotations, file_out):
-   # Include UTF-8 BOM; according to user reports some players care about this
-   file_out.write(b'\xef\xbb\xbf')
-   file_out.write(b'[Script Info]\r\n')
-   file_out.write(b'ScriptType: v4.00+\r\n')
-   file_out.write(b'[V4+ Styles]\r\n')
-   file_out.write(b'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\r\n')
-   file_out.write(b'Style: Default,,20,&H00FFFFFF,&HFFFFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,10,1\r\n')
-   file_out.write(b'[Events]\r\n')
-   file_out.write(b'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\r\n')
-   for annotation in annotations:
-      if (not annotation.is_sublike()):
-         continue
-      file_out.write(annotation.fmt_ssa().encode('utf-8'))
-      file_out.write(b'\r\n')
+class YTLoginRequired(YTError):
+   pass
+
+class YTDefaultFmt:
+   def __str__(self):
+      return 'default'
+
+FMT_DEFAULT = YTDefaultFmt()
+
+DATATYPE_VIDEO = 1
+DATATYPE_TIMEDTEXT = 4
+DATATYPE_ANNOTATIONS = 8
 
 
 class YTimedTextList:
    logger = logging.getLogger('YTimedTextList')
    log = logger.log
+   
+   # ISO code translation table is based on <http://www.loc.gov/standards/iso639-2/ISO-639-2_utf-8.txt>.
+   # Having it here is pretty ugly, but atm I don't have any other uses for it, and moving it into a seperate package and then
+   # having yavdlt depend on it would be additional pain without an upside.
+   ISO_693_1to2 = dict([('aa', 'aar'), ('ab', 'abk'), ('af', 'afr'), ('ak', 'aka'), ('sq', 'alb'), ('am', 'amh'), ('ar', 'ara'), ('an', 'arg'), ('hy', 'arm'), ('as', 'asm'), ('av', 'ava'), ('ae', 'ave'), ('ay', 'aym'), ('az', 'aze'), ('ba', 'bak'), ('bm', 'bam'), ('eu', 'baq'), ('be', 'bel'), ('bn', 'ben'), ('bh', 'bih'), ('bi', 'bis'), ('bs', 'bos'), ('br', 'bre'), ('bg', 'bul'), ('my', 'bur'), ('ca', 'cat'), ('ch', 'cha'), ('ce', 'che'), ('zh', 'chi'), ('cu', 'chu'), ('cv', 'chv'), ('kw', 'cor'), ('co', 'cos'), ('cr', 'cre'), ('cs', 'cze'), ('da', 'dan'), ('dv', 'div'), ('nl', 'dut'), ('dz', 'dzo'), ('en', 'eng'), ('eo', 'epo'), ('et', 'est'), ('ee', 'ewe'), ('fo', 'fao'), ('fj', 'fij'), ('fi', 'fin'), ('fr', 'fre'), ('fy', 'fry'), ('ff', 'ful'), ('ka', 'geo'), ('de', 'ger'), ('gd', 'gla'), ('ga', 'gle'), ('gl', 'glg'), ('gv', 'glv'), ('el', 'gre'), ('gn', 'grn'), ('gu', 'guj'), ('ht', 'hat'), ('ha', 'hau'), ('he', 'heb'), ('hz', 'her'), ('hi', 'hin'), ('ho', 'hmo'), ('hr', 'hrv'), ('hu', 'hun'), ('ig', 'ibo'), ('is', 'ice'), ('io', 'ido'), ('ii', 'iii'), ('iu', 'iku'), ('ie', 'ile'), ('ia', 'ina'), ('id', 'ind'), ('ik', 'ipk'), ('it', 'ita'), ('jv', 'jav'), ('ja', 'jpn'), ('kl', 'kal'), ('kn', 'kan'), ('ks', 'kas'), ('kr', 'kau'), ('kk', 'kaz'), ('km', 'khm'), ('ki', 'kik'), ('rw', 'kin'), ('ky', 'kir'), ('kv', 'kom'), ('kg', 'kon'), ('ko', 'kor'), ('kj', 'kua'), ('ku', 'kur'), ('lo', 'lao'), ('la', 'lat'), ('lv', 'lav'), ('li', 'lim'), ('ln', 'lin'), ('lt', 'lit'), ('lb', 'ltz'), ('lu', 'lub'), ('lg', 'lug'), ('mk', 'mac'), ('mh', 'mah'), ('ml', 'mal'), ('mi', 'mao'), ('mr', 'mar'), ('ms', 'may'), ('mg', 'mlg'), ('mt', 'mlt'), ('mn', 'mon'), ('na', 'nau'), ('nv', 'nav'), ('nr', 'nbl'), ('nd', 'nde'), ('ng', 'ndo'), ('ne', 'nep'), ('nn', 'nno'), ('nb', 'nob'), ('no', 'nor'), ('ny', 'nya'), ('oc', 'oci'), ('oj', 'oji'), ('or', 'ori'), ('om', 'orm'), ('os', 'oss'), ('pa', 'pan'), ('fa', 'per'), ('pi', 'pli'), ('pl', 'pol'), ('pt', 'por'), ('ps', 'pus'), ('qu', 'que'), ('rm', 'roh'), ('ro', 'rum'), ('rn', 'run'), ('ru', 'rus'), ('sg', 'sag'), ('sa', 'san'), ('si', 'sin'), ('sk', 'slo'), ('sl', 'slv'), ('se', 'sme'), ('sm', 'smo'), ('sn', 'sna'), ('sd', 'snd'), ('so', 'som'), ('st', 'sot'), ('es', 'spa'), ('sc', 'srd'), ('sr', 'srp'), ('ss', 'ssw'), ('su', 'sun'), ('sw', 'swa'), ('sv', 'swe'), ('ty', 'tah'), ('ta', 'tam'), ('tt', 'tat'), ('te', 'tel'), ('tg', 'tgk'), ('tl', 'tgl'), ('th', 'tha'), ('bo', 'tib'), ('ti', 'tir'), ('to', 'ton'), ('tn', 'tsn'), ('ts', 'tso'), ('tk', 'tuk'), ('tr', 'tur'), ('tw', 'twi'), ('ug', 'uig'), ('uk', 'ukr'), ('ur', 'urd'), ('uz', 'uzb'), ('ve', 'ven'), ('vi', 'vie'), ('vo', 'vol'), ('cy', 'wel'), ('wa', 'wln'), ('wo', 'wol'), ('xh', 'xho'), ('yi', 'yid'), ('yo', 'yor'), ('za', 'zha'), ('zu', 'zul')])
+   
    def __init__(self, vid, tdata):
       self.vid = vid
       self.tdata = tdata
@@ -200,76 +487,22 @@ class YTimedTextList:
          self.log(20, 'Fetching timedtext data from {0!a} and processing.'.format(url))
          req = urllib.request.urlopen(url)
          content = req.read()
-         tt_entries = YTimedTextEntry.parse_block(content)
-         rv.append((name, lc, tt_entries))
+         
+         if (lc == ''):
+            lc2 = None
+         else:
+            try:
+               lc2 = self.ISO_693_1to2[lc]
+            except KeyError:
+               self.log(30, 'Unknown presumed ISO 693-1 lang code {0!a}; marking as unknown.'.format(lc))
+               lc2 = None
+         
+         ss = ASSSubSet(name, lc2)
+         ss.add_subs_from_yt_tt(content)
+         rv.append(ss)
          
       return rv
 
-
-class YTimedTextEntry:
-   def __init__(self, ts_start, dur, text):
-      self.ts_start = ts_start
-      self.dur = dur
-      self.text = text
-   
-   @classmethod
-   def parse_block(cls, content):
-      dom = xml.dom.minidom.parseString(content)
-      rv = []
-      for node in dom.getElementsByTagName('text'):
-         if (node.firstChild is None):
-            text = ''
-         else:
-            text = xml_unescape(node.firstChild.nodeValue)
-         
-         try:
-            dur = float(node.attributes['dur'].value)
-         except KeyError:
-            # This is very rare, and I have no idea what the actual meaning
-            # of this construct is. Defaulting to 0 until we get a better
-            # understanding of this case.
-            dur = 0.0
-         rv.append(cls(
-            float(node.attributes['start'].value),
-            dur,
-            text
-         ))
-      return tuple(rv)
-   
-   def __cmp__(self, other):
-      if (self.ts_start < other.ts_start): return -1
-      if (self.ts_start > other.ts_start): return 1
-      if (self.dur < other.dur): return -1
-      if (self.dur > other.dur): return 1
-      if (id(self) < id(other)): return -1
-      if (id(self) > id(other)): return 1
-      return 0
-   
-   def is_sublike(self):
-      return True
-   
-   def fmt_ssa(self):
-      return 'Dialogue: 0,{0},{1},Default,,0000,0000,0000,,{2}'.format(
-         _second2ssa_ts(self.ts_start),
-         _second2ssa_ts(self.ts_start+self.dur),
-         self.text.replace('\n', '\\N')
-      )
-
-class YTError(Exception):
-   pass
-
-class YTLoginRequired(YTError):
-   pass
-
-class YTDefaultFmt:
-   def __str__(self):
-      return 'default'
-
-FMT_DEFAULT = YTDefaultFmt()
-
-DATATYPE_VIDEO = 1
-DATATYPE_TIMEDTEXT = 4
-DATATYPE_ANNOTATIONS = 8
 
 class YTVideoRef:
    re_tok = re.compile('&t=(?P<field_t>[^"&]+)&')
@@ -460,12 +693,32 @@ class YTVideoRef:
          mkvb = MatroskaBuilder(1000000, None)
       
       if (dtm & DATATYPE_ANNOTATIONS):
-         #TODO mkv muxing ...
-         self.fetch_annotations()
+         (annotations, sts) = self.fetch_annotations()
+         if (sts is None):
+            pass
+         elif (len(sts.subs) == 0):
+            self.log(20, 'Received {0:d} annotations, but none appear sublike. :('.format(len(annotations)))
+         else:
+            if (self.make_mkv):
+               self.log(20, 'Received {0:d}(/{1:d}) sublike annotations; muxing into MKV.'.format(len(sts.subs), len(annotations)))
+               sts.mkv_add_track(mkvb)
+            elif 0: #HACK: Force this until annotation subs in mkv files actually work.
+               fn_out = self._choose_final_fn('ass')
+               self.log(20, 'Received {0:d}(/{1:d}) sublike annotations; writing to {2!a}.'.format(len(sts.subs), len(annotations), fn_out))
+               f = open(fn_out, 'wb')
+               sts.write_to_file(f)
+               f.close()
       
       if (dtm & DATATYPE_TIMEDTEXT):
-         # TODO mkv muxing ...
-         self.fetch_tt()
+         ttd = self.fetch_tt()
+         if not (ttd is None):
+            if (self.make_mkv):
+               self.log(20, 'Muxing TimedText data into MKV.')
+               for sts in ttd:
+                  sts.mkv_add_track(mkvb)
+               
+            else:
+               self._dump_ttd(ttd)
          
       if (self.make_mkv):
          fn_out = self._choose_tmp_fn('mkv')
@@ -475,6 +728,7 @@ class YTVideoRef:
          f_out.close()
          self._move_video(fn_out)
          # MKV write cycle is finished; remove the raw video file.
+         raise # XXX debug code
          os.unlink(vf.name)
    
    def fetch_video(self):
@@ -579,13 +833,11 @@ class YTVideoRef:
       annotations = parse_ytanno(BytesIO(content))
       if (len(annotations) < 1):
          self.log(20, 'There are no annotations for this video.')
-         return
+         return (None, None)
       
-      fn_out = self._choose_tmp_fn('ssa')
-      self.log(20, 'Received {0:d} annotations; writing to {1!a}.'.format(len(annotations), fn_out))
-      f = open(fn_out, 'wb')
-      dump_ytannos_ssa(annotations, f)
-      f.close()
+      rv = ASSSubSet()
+      rv.add_subs_from_yt_annotations(annotations)
+      return (annotations, rv)
    
    def fetch_tt(self):
       url = self.mangle_yt_url('http://video.google.com/timedtext?v={0}&type=list'.format(self.vid))
@@ -601,16 +853,22 @@ class YTVideoRef:
       
       if (len(tdata) < 1):
          self.log(20, 'No timedtext streams found.')
-
-      for ((name, lc, ttel)) in tdata:
+      
+      return(tdata)
+   
+   def _dump_ttd(self, ttdata):
+      for subset in ttdata:
+         lc = subset.lc
+         if (lc is None):
+            lc = ''
          lc = lc.replace('/', '').replace('\x00','')
-         name = name.replace('/', '').replace('\x00','')
-         fn = self._choose_fn('{0}_{1}.ssa'.format(lc, name))
-         self.log(20, 'Writing timedtext data for name {0!a}, lc {1} to {2}.'.format(name, lc, fn))
+         name = subset.name.replace('/', '').replace('\x00','')
+         fn = self._choose_fn('{0}_{1}.ass'.format(lc, name))
+         self.log(20, 'Writing timedtext data for name {0!a}, lc {1} to {2!a}.'.format(subset.name, subset.lc, fn))
          if (isinstance(fn, str)):
             fn = fn.encode('utf-8')
          f = open(fn, 'wb')
-         dump_ytannos_ssa(ttel, f)
+         subset.write_to_file(f)
          f.close()
    
    def fmt_url_map_fetch_update(self, fmt):
@@ -762,6 +1020,7 @@ class YTPlayListRef:
       self.vids = vids_l
    
 
+# ---------------------------------------------------------------- Cmdline / config interpretation code
 def arg2vidset(s, fallback=True):
    import logging
    log = logging.getLogger('arg2vidset').log
