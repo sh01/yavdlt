@@ -387,7 +387,7 @@ class MovSampleEntryVideo(MovSampleEntry):
 class MovSampleEntryVideo_AVC1(MovSampleEntryVideo):
    type = FourCC('avc1')
    def get_codec_init_data(self):
-      """Return codec-specific initialization data. This version always returns None."""
+      """Return codec-specific initialization data, H264 variant."""
       return self.find_subbox('avcC').get_body()
 
 @_mov_sample_entry_type_reg
