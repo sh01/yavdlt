@@ -177,13 +177,13 @@ class FLVAudioData(FLVTag):
       super().__init__(ts)
       self.data_r = data_r
       self.codec = codec
+      self.sample_size = sample_size
       self.sample_freq = rate
-      self.sfreq = sample_size
       self.channels = channels
       self.aac_pt = aac_pt
 
    def check_stream_consistency(self, other):
-      return ((self.codec == other.codec) and (self.sfreq == other.sfreq) and (self.channels == other.channels))
+      return ((self.codec == other.codec) and (self.sample_freq == other.sample_freq) and (self.channels == other.channels))
 
    def is_header(self):
       if (self.aac_pt is None):
@@ -781,7 +781,7 @@ class FLVReader:
          except IndexError:
             d['codec'] = tag.codec
             if (isinstance(tag, FLVAudioData)):
-               d['sfreq'] = tag.sfreq
+               d['sfreq'] = tag.sample_freq
                d['channel_count'] = tag.channels
                
          else:
