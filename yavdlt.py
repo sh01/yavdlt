@@ -1303,12 +1303,11 @@ def main():
       
       try:
          ref.get_token_blocking()
+         ref.fetch_data(dtypemask)
       except YTError:
          log(30, 'Failed to retrieve video {0!a}:'.format(vid), exc_info=True)
          vids_failed.append(vid)
-         continue         
-      
-      ref.fetch_data(dtypemask)
+         continue
    
    if (vids_failed):
       log(30, 'Failed to retrieve videos: {0}.'.format(vids_failed))
