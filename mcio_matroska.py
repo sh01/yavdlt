@@ -1260,6 +1260,10 @@ class MatroskaBuilder:
    
    # Be bug-compatible with mplayer r1.0~rc3+svn20100502-4.4.4, at the cost of allocating the first cluster suboptimally.
    bc_old_mplayer = True
+   # Work around some VLC bugs. Note that VLC is sufficiently buggy that working around *all* of them is likely to remain
+   # impractical for the forseeable future. For instance, there are currently no plans to implement a workaround for
+   # <https://trac.videolan.org/vlc/ticket/2702>.
+   bc_vlc = True
    
    MS_CM_NEVER = 0
    MS_CM_AUTO = 1
@@ -1323,12 +1327,24 @@ class MatroskaBuilder:
       c = None
       c_max = -1
       c_min = 0
+      
+      tlen_c = self.TLEN_CLUSTER
+      if (self.bc_old_mplayer or self.bc_vlc):
+         # Old mplayer versions can't seek backwards with more than cluster-level granularity; IOW, when seeking backwards,
+         # they will always pick the first keyframe from a cluster, even if the closest such match is e.g. an entire minute
+         # in the past.
+         # VLC also doesn't like long clusters, though the symptoms are somewhat different (in particular, short forward
+         # seek requests can end up seeking backwards instead).
+         # To prevent these bugs from having too much of a UI impact, we limit the absolute cluster duration to 5 seconds
+         # seconds here if either of the relevant bug compatibility modes is enabled.
+         tlen_c = min(tlen_c, int(5*10**9/self.tcs))
+      
       def add_cluster(tc):
          nonlocal c, c_max, c_min
          c = MatroskaElementCluster.new(tc+self.TOFF_CLUSTER)
          clusters.append(c)
-         c_max = c._tc + 2**15-1
          c_min = c._tc - 2**15
+         c_max = c_min + tlen_c - 1
          c.__blockcount = 0
       
       if (self.bc_old_mplayer):
