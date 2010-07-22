@@ -17,6 +17,9 @@ its feature set includes:
 
   * Downloading Annotation data and converting it to the SSA subtitle format.
 
+  * Muxing downloaded Video/Audio and sub (timedtext, annotation or both) data
+    into a single MKV file per YT video.
+
   * Flexible format selection heuristics; you can define any number of format
     preference lists, and choose one for each download - allowing you to choose
     the specific tradeoff between file size and video quality, without having to
@@ -54,6 +57,9 @@ To download all videos from a playlist:
 
 To force a specific video format:
  ./yavdlt.py --fmt 18 dhRUe-gz690
+
+To mux downloaded AV and sub data into MKV files:
+ ./yavdlt.py --mkv grCTXGW3sxQ
 
 
 ==== Config ====
