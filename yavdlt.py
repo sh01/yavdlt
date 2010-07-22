@@ -258,6 +258,7 @@ class ASSSubSet:
       return b''.join((b'\r\n[Events]\r\nFormat: ', ', '.join(fn).encode('utf-8'), b'\r\n\r\n'))
    
    def write_to_file(self, f):
+      self.subs.sort()
       f.write(self._get_header())
       f.write(self._get_header2(ASSSubtitle.ASS_FIELD_NAMES))
       for sub in self.subs:
@@ -266,6 +267,7 @@ class ASSSubSet:
    
    def _iter_subs_mkv(self, tcs):
       from mcio_base import DataRefBytes
+      self.subs.sort()
       cf = 10**9/tcs
       i = 1
       for sub in self.subs:
@@ -702,7 +704,7 @@ class YTVideoRef:
             if (self.make_mkv):
                self.log(20, 'Received {0:d}(/{1:d}) sublike annotations; muxing into MKV.'.format(len(sts.subs), len(annotations)))
                sts.mkv_add_track(mkvb)
-            if 1: #HACK: Force this until annotation subs in mkv files actually work.
+            else:
                fn_out = self._choose_final_fn('ass')
                self.log(20, 'Received {0:d}(/{1:d}) sublike annotations; writing to {2!a}.'.format(len(sts.subs), len(annotations), fn_out))
                f = open(fn_out, 'wb')
@@ -728,7 +730,6 @@ class YTVideoRef:
          f_out.close()
          self._move_video(fn_out)
          # MKV write cycle is finished; remove the raw video file.
-         raise # XXX debug code
          os.unlink(vf.name)
    
    def fetch_video(self):
@@ -835,6 +836,7 @@ class YTVideoRef:
          self.log(20, 'There are no annotations for this video.')
          return (None, None)
       
+      annotations.sort()
       rv = ASSSubSet()
       rv.add_subs_from_yt_annotations(annotations)
       return (annotations, rv)
