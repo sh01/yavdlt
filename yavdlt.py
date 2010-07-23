@@ -166,7 +166,7 @@ class ASSSubtitle:
    def __ge__(self, other):
       return (self.__cmp__(other) >= 0)
 
-   def _get_body(self):
+   def get_body(self):
       return self.text.replace('\n','\\N')
    
    def _get_name(self):
@@ -179,12 +179,12 @@ class ASSSubtitle:
       """Return line for this sub as it would appear in a standalone ASS file."""
       return 'Dialogue: ' + ','.join(str(x) for x in (self.layer,_second2ass_ts(self.start),
          _second2ass_ts(self.start+self.dur), self.style.name, self._get_name(), self.margin_l, self.margin_r, self.margin_v, '',
-         self._get_body()))
+         self.get_body()))
    
    def get_line_ass_mkv(self, ro):
       """Return line for this sub as it would appear in a data block in a MKV file."""
       return ','.join(str(x) for x in (ro, self.layer, self.style.name, self._get_name(), self.margin_l,
-         self.margin_r, self.margin_v, '', self._get_body()))
+         self.margin_r, self.margin_v, '', self.get_body()))
       
 
 class ASSSubSet:
@@ -197,6 +197,12 @@ class ASSSubSet:
       if (lc is None):
          lc = 'und'
       self.lc = lc
+   
+   def contains_nonempty_subs(self):
+      for sub in self.subs:
+         if (len(sub.get_body()) > 0):
+            return True
+      return False
    
    def _get_style_name(self):
       rv = 'Style{0:d}'.format(self._style_i)
@@ -496,10 +502,10 @@ class YTimedTextList:
          if (name == ''):
             name = None
          
+         lc_orig = lc
          if (lc == ''):
             lc2 = None
          else:
-            lc_orig = lc
             # Remove subtags; we only care about the top-level code here.
             (lc, *__junk) = lc.split('-',1)
             
@@ -516,7 +522,10 @@ class YTimedTextList:
          
          ss = ASSSubSet(name, lc2)
          ss.add_subs_from_yt_tt(content)
-         rv.append(ss)
+         if (ss.contains_nonempty_subs()):
+            rv.append(ss)
+         else:
+            self.log(20, 'Subset with lc {0!a} and name {1!a} contained no non-empty subs; discarding.'.format(lc_orig, name))
          
       return rv
 
