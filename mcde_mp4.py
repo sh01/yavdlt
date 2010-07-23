@@ -455,34 +455,32 @@ class MovBoxCodecPrivate_EsDescriptor(MovFullBox):
       off = self.bfmt_len
       
       def get_byte():
-         return struct.unpack('>B', bd[off:off+1])
+         return struct.unpack('>B', bd[off:off+1])[0]
       
-      if (len(bd)-off > 0):
-         (tag,) = get_byte()
-         if (tag != 4):
-            raise ValueError('Found unsupported initial ESDS-subdescriptor of type {0}.'.format(tag))
+      def get_length():
+         nonlocal off
+         rv = 0
+         for i in range(4):
+            d = get_byte()
+            off += 1
+            rv <<= 7
+            rv |= (d & 127)
+            if not (d & 128):
+               break
+         return rv
       
       # DecoderConfigDescriptor parsing
       while (len(bd)-off > 0):
-         (tag,) = get_byte()
-         if (tag != 4):
-            break
+         tag = get_byte()
          off += 1
-         (length,) = get_byte()
-         off += 1
+         length = get_length()
          data = bd[off:off+length]
          off += length
-         self.dcd_data.append(_DecoderConfigDescriptor.build_from_bindata(data))
+         if (tag == 4):
+            self.dcd_data.append(_DecoderConfigDescriptor.build_from_bindata(data))
       
-      # SLConfig parsing
-      while (len(bd)-off > 0):
-         (tag,) = get_byte()
-         if (tag != 6):
-            break
-         off += 1
-         (length,) = get_byte()
-         slc = bd[off:off+length]
-         off += length
+      if (len(bd) != off):
+         raise ValueError('Failed to parse ESDS body data {0} correctly: length {{over,under}}run.'.format(bd))
       
 
 @_mov_box_type_reg
