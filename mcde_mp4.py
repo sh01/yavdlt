@@ -17,6 +17,7 @@
 
 # Media container data extraction: MP4
 
+import collections
 import datetime
 import struct
 
@@ -405,6 +406,84 @@ class MovSampleEntrySound(MovSampleEntry):
    def _format_f(self, fs):
       return '<{0} type: {1} dri: {2} channels: {3} sample size: {4} sample rate: {5}>'.format(type(self).__name__, self.type,
          self.dri, self.channel_count, self.sample_size, self.sample_rate)
+
+@_mov_box_type_reg
+class MovSampleEntryVideo_AVC1(MovSampleEntrySound):
+   type = FourCC('mp4a')
+   def get_codec_init_data(self):
+      """Return codec-specific initialization data, H264 variant."""
+      try:
+         esds = self.find_subbox('esds')
+      except ValueError:
+         return None
+      
+      return esds.get_dsi()
+
+class _DecoderConfigDescriptor(collections.namedtuple('_dcdb', 'opi si bufsize br_max br_avg dsi')):
+   bfmt = '>BBBLLL'
+   bfmt_len = struct.calcsize(bfmt)
+   @classmethod
+   def build_from_bindata(cls, bd):
+      (opi, si, bs, data2, br_max, br_avg) = struct.unpack(cls.bfmt, bd[:cls.bfmt_len])
+      bs = (data2 & 16777215)
+      si = (data2 >> 24)
+      dsi = bd[cls.bfmt_len:]
+      return cls(opi, si, bs, br_max, br_avg, dsi)
+      
+
+@_mov_box_type_reg
+class MovBoxCodecPrivate_EsDescriptor(MovFullBox):
+   type = FourCC('esds')
+   bfmt = '>BBHB'
+   bfmt_len = struct.calcsize(bfmt)
+   
+   def get_dsi(self):
+      if (self.dcd_data):
+         return self.dcd_data[0].dsi
+      return None
+   
+   def _init2(self):
+      super()._init2()
+      bd = self.get_body()
+      self.dcd_data = []
+      (tag, length, es_id, flags) = struct.unpack(self.bfmt, bd[:self.bfmt_len])
+      if (tag != 3):
+         raise ValueError('Unexpected ES tag value {0}.'.format(tag))
+      if (length != len(bd)-2):
+         raise ValueError('Unexpected ES body len {0}; expected {1}.'.format(length,len(bd)-2))
+      
+      off = self.bfmt_len
+      
+      def get_byte():
+         return struct.unpack('>B', bd[off:off+1])
+      
+      if (len(bd)-off > 0):
+         (tag,) = get_byte()
+         if (tag != 4):
+            raise ValueError('Found unsupported initial ESDS-subdescriptor of type {0}.'.format(tag))
+      
+      # DecoderConfigDescriptor parsing
+      while (len(bd)-off > 0):
+         (tag,) = get_byte()
+         if (tag != 4):
+            break
+         off += 1
+         (length,) = get_byte()
+         off += 1
+         data = bd[off:off+length]
+         off += length
+         self.dcd_data.append(_DecoderConfigDescriptor.build_from_bindata(data))
+      
+      # SLConfig parsing
+      while (len(bd)-off > 0):
+         (tag,) = get_byte()
+         if (tag != 6):
+            break
+         off += 1
+         (length,) = get_byte()
+         slc = bd[off:off+length]
+         off += length
+      
 
 @_mov_box_type_reg
 class MovBoxMediaHeader(MovFullBox):
