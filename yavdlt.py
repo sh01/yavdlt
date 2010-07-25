@@ -531,10 +531,10 @@ class YTimedTextList:
 
 
 class YTVideoRef:
-   re_tok = re.compile('&t=(?P<field_t>[^"&]+)&')
-   re_title = re.compile('<link rel="alternate" +type="application/json\+oembed" +href="[^"]*" +title="(?P<text>.*?)" */>')
-   re_err = re.compile('<div[^>]* class="yt-alert-content"[^>]*>(?P<text>.*?)</div>', re.DOTALL)
-   re_err_age = re.compile('<div id="verify-age-details">(?P<text>.*?)</div>', re.DOTALL)
+   re_tok = re.compile(b'&t=(?P<field_t>[^"&]+)&')
+   re_title = re.compile(b'<link rel="alternate" +type="application/json\+oembed" +href="[^"]*" +title="(?P<text>.*?)" */>')
+   re_err = re.compile(b'<div[^>]* class="yt-alert-content"[^>]*>(?P<text>.*?)</div>', re.DOTALL)
+   re_err_age = re.compile(b'<div id="verify-age-details">(?P<text>.*?)</div>', re.DOTALL)
    re_fmt_url_map_markup = re.compile(r'\? "(?P<umm>.*?fmt_url_map=.*?>)"')
    re_fmt_url_map = re.compile('fmt_url_map=(?P<ums>[^"&]+)&')
    
@@ -677,6 +677,9 @@ class YTVideoRef:
    def _choose_fn(self, ext=None):
       title = self.title
       mtitle = ''
+      if isinstance(title, bytes):
+         title = title.decode('utf-8')
+      
       for c in title:
          if (c.isalnum() or (c in '-')):
             mtitle += c
@@ -940,7 +943,7 @@ class YTVideoRef:
       if (m is None):
         return
       umm = m.groupdict()['umm']
-      umm_unescaped = umm.decode('string_escape')
+      umm_unescaped = umm.encode('utf-8').decode('unicode_escape')
       m2 = self.re_fmt_url_map.search(umm_unescaped)
       
       if (m2 is None):
