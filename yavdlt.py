@@ -699,7 +699,9 @@ class YTVideoRef:
    
    def fetch_data(self, dtm):
       # Need to determine preferred format first.
-      self.pick_video()
+      if (self.pick_video() is None):
+         # No working formats, forget all this then.
+         return
       
       if (self.make_mkv and os.path.exists(self._choose_final_fn())):
          # MKV files are only written once we have retrieved all the data for this video; so if one for this video exists
