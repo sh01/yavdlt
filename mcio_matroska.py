@@ -987,6 +987,10 @@ class EBMLElementDocTypeReadVersion(MatroskaElementUInt):
    type = EBMLVInt(645)
 
 @_mkv_type_reg
+class MatroskaElementPrevSize(MatroskaElementUInt):
+   type = EBMLVInt(43)
+
+@_mkv_type_reg
 class MatroskaElementCueClusterPosition(MatroskaElementUInt):
    type = EBMLVInt(113)
    def _get_body_size(self):
@@ -1341,7 +1345,10 @@ class MatroskaBuilder:
       
       def add_cluster(tc):
          nonlocal c, c_max, c_min
-         c = MatroskaElementCluster.new(tc+self.TOFF_CLUSTER)
+         c2 = MatroskaElementCluster.new(tc+self.TOFF_CLUSTER)
+         if not (c is None):
+            c2.set_sub(MatroskaElementPrevSize.new(c.get_size()))
+         c = c2
          clusters.append(c)
          c_min = c._tc - 2**15
          c_max = c_min + tlen_c - 1
