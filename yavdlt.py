@@ -33,7 +33,13 @@ import xml.dom.minidom
 
 from io import BytesIO
 
+# ---------------------------------------------------------------- General helper functions
+
 xml_unescape = html.parser.HTMLParser().unescape
+
+def escape_decode(s):
+   from codecs import escape_decode
+   return escape_decode(s.encode('utf-8'))[0].decode('utf-8')
 
 
 # ---------------------------------------------------------------- ASS sub building code
@@ -943,7 +949,8 @@ class YTVideoRef:
       if (m is None):
         return
       umm = m.groupdict()['umm']
-      umm_unescaped = umm.encode('utf-8').decode('unicode_escape')
+      
+      umm_unescaped = escape_decode(umm)
       m2 = self.re_fmt_url_map.search(umm_unescaped)
       
       if (m2 is None):
