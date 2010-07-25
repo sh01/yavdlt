@@ -1297,9 +1297,6 @@ def main():
    import os.path
    import sys
    
-   if ((sys.getfilesystemencoding() == 'ascii') and (sys.getdefaultencoding() != 'ascii')):
-      sys.setfilesystemencoding(sys.getdefaultencoding())
-   
    logger = logging.getLogger()
    log = logger.log
    
