@@ -539,7 +539,7 @@ class YTimedTextList:
 class YTVideoRef:
    re_tok = re.compile(b'&t=(?P<field_t>[^"&]+)&')
    re_title = re.compile(b'<link rel="alternate" +type="application/json\+oembed" +href="[^"]*" +title="(?P<text>.*?)" */>')
-   re_err = re.compile(b'<div[^>]* class="yt-alert-content"[^>]*>(?P<text>.*?)</div>', re.DOTALL)
+   re_err = re.compile(b'<div[^>]* id="error-box"[^>]*>.*?<div[^>]* class="yt-alert-content"[^>]*>(?P<text>.*?)</div>', re.DOTALL)
    re_err_age = re.compile(b'<div id="verify-age-details">(?P<text>.*?)</div>', re.DOTALL)
    re_fmt_url_map_markup = re.compile(r'\? "(?P<umm>.*?fmt_url_map=.*?>)"')
    re_fmt_url_map = re.compile('fmt_url_map=(?P<ums>[^"&]+)&')
@@ -646,7 +646,7 @@ class YTVideoRef:
          else:
             error_cls = YTError
          
-         err_text = m_err.groupdict()['text'].strip()
+         err_text = m_err.groupdict()['text'].strip().decode('utf-8')
          err_text = err_text.replace('<br/>', '')
          err_text = xml_unescape(err_text)
          raise error_cls('YT refuses to deliver token: {0!a}.'.format(err_text))
