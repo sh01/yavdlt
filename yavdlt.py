@@ -731,6 +731,7 @@ class YTVideoRef:
          mkvb = MatroskaBuilder(1000000, None)
       
       if (self.make_mkv):
+         mkvb.set_writingapp('Yet Another Video DownLoad Tool (unversioned)')
          file_title = 'Youtube video {0!a}({1:d}): {2}'.format(self.vid, self._fmt, self.title)
          mkvb.set_segment_title(file_title)
          if (dtm & DATATYPE_VIDEO):
