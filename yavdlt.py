@@ -1179,7 +1179,7 @@ class Config:
       @self.url_mapper_reg(name)
       def url_mangle(url):
          from base64 import encodebytes
-         return ''.join((baseurl, '/index.php?q=', encodebytes(url.encode('utf-8','surrogateescape')).replace(b'\n',b'').decode('ascii')))
+         return ''.join((baseurl, '/index.php?q=', encodebytes(url.encode('utf-8','surrogateescape')).replace(b'\n',b'').decode('ascii'), '&hl=e8'))
       return url_mangle
 
    def _read_config_file(self):
