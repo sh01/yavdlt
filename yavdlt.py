@@ -818,7 +818,7 @@ class YTVideoRef:
          f.seek(off_start)
          prefix_data = f.read()
          if (len(prefix_data) != plen):
-            raise YTError('Target file appears ot have changed size from under us; bailing out.')
+            raise YTError('Target file appears to have changed size from under us; bailing out.')
          req_headers['Range'] = 'bytes={0}-'.format(off_start)
       else:
          prefix_data = None
