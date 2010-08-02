@@ -658,7 +658,7 @@ class YTVideoRef:
          self.log(30, 'Unable to extract video title; this probably indicates a yavdlt bug.')
          self.title = '--untitled--'
       else:
-         self.title = m.groupdict()['text']
+         self.title = m.groupdict()['text'].decode('utf-8')
 
       self.log(20, 'Acquired token {0}.'.format(tok))
       self.tok = tok
