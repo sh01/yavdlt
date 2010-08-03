@@ -74,7 +74,7 @@ class EBMLVInt(int):
       return c.f.write(bd)
    
    def new(cls, *args, **kwargs):
-      return cls(self.type, *args, **kwargs)
+      return cls(*args, **kwargs)
    
    @classmethod
    def build_from_bindata(cls, bd):
@@ -143,16 +143,90 @@ class MatroskaSVInt(EBMLSVInt):
       if not (-1*self.val_lim <= x <= self.val_lim):
          raise MatroskaError('SVInt val {0} outside of defined domain.'.format(x))
 
+def _cls_default_set(cls):
+   try:
+      default_val = cls.default
+   except AttributeError:
+      cls.default = None
+   else:
+      cls.default = cls(default_val)
+
+class EBMLNamespace:
+   cls_build_default = None
+   def __init__(self, vint_type, bases=()):
+      self.vint_type = vint_type
+      self.bases = tuple(bases)
+      self.cls_map = {}
+   
+   def register_element(self, cls):
+      """Add supported EBML element cls to this namespace. Intended for use as a decorator."""
+      self.cls_map[cls.type] = cls
+      _cls_default_set(cls)
+      return cls
+   
+   def _etype2bff(self, etype, default_ok=True):
+      try:
+         rv = self.cls_map[etype]._build_from_file
+      except KeyError:
+         pass
+      else:
+         return rv
+      
+      for base in self.bases:
+         cls = base._etype2bff(etype, default_ok=False)
+         if not (cls is None):
+            return cls._build_from_file
+      
+      if ((not default_ok) or (self.cls_build_default is None)):
+         return None
+      
+      bff = self.cls_build_default._build_from_file
+      def rv(*args, **kwargs):
+         rv2 = bff(*args, **kwargs)
+         rv2.type = etype
+         return rv2
+      return rv
+   
+   def build_from_file(self, f):
+      """Deserialize one EBML element from filelike, returning it and the number of bytes consumed."""
+      bufsize = 8
+      off = f.tell()
+      (etype, sz_et) = self.vint_type.build_from_file(f)
+      off += sz_et
+      f.seek(off)
+      (size, sz_sz) = self.vint_type.build_from_file(f)
+      off += sz_sz
+      f.seek(off)
+      bff = self._etype2bff(etype)
+      rv = (bff(size, f), sz_sz+sz_et+size)
+      return rv
+
+   def build_seq_from_file(self, f, size_lim=None):
+      """Deserialize sequence of EBML elements from filelike, up to size_lim (or EOF if not specified)."""
+      off = f.tell()
+      rv = []
+      if (size_lim is None):
+         off_lim = f.seek(0,2)
+      else:
+         off_lim = off + size_lim
+      
+      while (off < off_lim):
+         f.seek(off)
+         (el, size) = self.build_from_file(f)
+         rv.append(el)
+         off += size
+      
+      if (off != off_lim):
+         raise EBMLError('Element size / filesize mismatch.')
+      return rv
+
+ebml_ns_ebml = EBMLNamespace(EBMLVInt)
+ebml_ns_mkv = EBMLNamespace(MatroskaVInt, (ebml_ns_ebml,))
+
+_ebml_type_reg = ebml_ns_ebml.register_element
+_mkv_type_reg = ebml_ns_mkv.register_element
 
 class EBMLElement:
-   cls_map = {}
-   cls_build_default = None
-   vint_type = EBMLVInt
-   
-   def __init__(self, etype):
-      if ((not hasattr(self, 'type')) or (self.type != etype)):
-         self.type = etype
-   
    def __format__(self, s):
       return '{0}({1})'.format(type(self).__name__,(self.type))
    
@@ -163,49 +237,10 @@ class EBMLElement:
       size = MatroskaVInt(size)
       return self.type.write_to_file(c) + size.write_to_file(c)
 
-   @classmethod
-   def _etype2cls(cls, etype):
-      try:
-         rv = cls.cls_map[etype]
-      except KeyError:
-         rv = cls.cls_build_default
-      return rv
-   
-   @classmethod
-   def build_from_file(cls, f):
-      bufsize = 8
-      off = f.tell()
-      (etype, sz_et) = cls.vint_type.build_from_file(f)
-      off += sz_et
-      f.seek(off)
-      (size, sz_sz) = cls.vint_type.build_from_file(f)
-      off += sz_sz
-      f.seek(off)
-      cls_c = cls._etype2cls(etype)
-      return (cls_c._build_from_file(etype, size, f), sz_sz+sz_et+size)
-
-   @classmethod
-   def build_seq_from_file(cls, f, size_lim=None):
-      off = f.tell()
-      rv = []
-      if (size_lim is None):
-         off_lim = f.seek(0,2)
-      else:
-         off_lim = off + size_lim
-      
-      while (off < off_lim):
-         f.seek(off)
-         (el, size) = cls.build_from_file(f)
-         rv.append(el)
-         off += size
-      
-      if (off != off_lim):
-         raise EBMLError('Element size / filesize mismatch.')
-      return rv
 
 class EBMLElementUnknown(EBMLElement):
-   def __init__(self, etype, size, f):
-      super().__init__(etype)
+   def __init__(self, size, f):
+      super().__init__()
       self.data_r = DataRefFile(f, f.tell(), size)
    
    def __deepcopy__(self, mdict):
@@ -223,51 +258,17 @@ class EBMLElementUnknown(EBMLElement):
    def write_to_file(self, c):
       self._write_header(c, self.data_r.size)
       c.f.write(self.data_r.get_data())
-EBMLElement.cls_build_default = EBMLElementUnknown
-
-def _cls_default_set(cls):
-   try:
-      default_val = cls.default
-   except AttributeError:
-      cls.default = None
-   else:
-      cls.default = cls(cls.type, default_val)
-
-def _ebml_type_reg(cls):
-   EBMLElement.cls_map[cls.type] = cls
-   _cls_default_set(cls)
-   return cls
+ebml_ns_ebml.cls_build_default = EBMLElementUnknown
 
 class MatroskaElement(EBMLElement):
-   cls_map_m = {}
-   vint_type = MatroskaVInt
-
    @classmethod
    def new(cls, *args, **kwargs):
-      return cls(cls.type, *args, **kwargs)
-
-   @classmethod
-   def _etype2cls(cls, etype):
-      try:
-         rv = cls.cls_map[etype]
-      except KeyError:
-         try:
-            rv = cls.cls_map_m[etype]
-         except KeyError:
-            rv = cls.cls_build_default
-      return rv
-
-
-def _mkv_type_reg(cls):
-   MatroskaElement.cls_map_m[cls.type] = cls
-   _cls_default_set(cls)
-   return cls
-
+      return cls(*args, **kwargs)
 
 class MatroskaElementMaster(MatroskaElement):
    __slots__ = ('type', 'sub')
-   def __init__(self, etype, sub):
-      super().__init__(etype)
+   def __init__(self, sub):
+      super().__init__()
       self.sub = sub
 
    def __deepcopy__(self, mdict):
@@ -311,9 +312,9 @@ class MatroskaElementMaster(MatroskaElement):
             return e.val
 
    @classmethod
-   def _build_from_file(cls, etype, body_size, f):
-      sub = MatroskaElement.build_seq_from_file(f, body_size)
-      return cls(etype, sub)
+   def _build_from_file(cls, body_size, f):
+      sub = ebml_ns_mkv.build_seq_from_file(f, body_size)
+      return cls(sub)
 
 @_ebml_type_reg
 class EBMLHeader(MatroskaElementMaster):
@@ -321,8 +322,8 @@ class EBMLHeader(MatroskaElementMaster):
 
 class MatroskaElementBinary(MatroskaElement):
    __slots__ = ('type', 'data_r')
-   def __init__(self, etype, data_r):
-      super().__init__(etype)
+   def __init__(self, data_r):
+      super().__init__()
       self.data_r = data_r
 
    def __deepcopy__(self, mdict):
@@ -352,18 +353,18 @@ class MatroskaElementBinary(MatroskaElement):
       if (isinstance(data, bytes)):
          data = DataRefBytes(data)
       
-      return cls(cls.type, data, *args, **kwargs)
+      return cls(data, *args, **kwargs)
 
    @classmethod
-   def _build_from_file(cls, etype, body_size, f):
+   def _build_from_file(cls, body_size, f):
       data_r = DataRefFile(f, f.tell(), body_size)
-      return cls(etype, data_r)
+      return cls(data_r)
 
 
 class MatroskaElementBaseNum(MatroskaElement):
    __slots__ = ('type', 'val')
-   def __init__(self, etype, val, body_size=None):
-      super().__init__(etype)
+   def __init__(self, val, body_size=None):
+      super().__init__()
       self.val = val
 
    def __deepcopy__(self, mdict):
@@ -419,10 +420,10 @@ class MatroskaElementBaseNum(MatroskaElement):
 
 class MatroskaElementUInt(MatroskaElementBaseNum):
    bfmt = '>Q'
-   def __init__(self, etype, val, *args, **kwargs):
+   def __init__(self, val, *args, **kwargs):
       assert(val >= 0)
       val.bit_length()
-      super().__init__(etype, val, *args, **kwargs)
+      super().__init__(val, *args, **kwargs)
    
    def _get_body_size(self):
       # Mplayer r1.0~rc3 seems to violently dislike the 0-byte case for some reason. Hack around it here to make it happy.
@@ -431,9 +432,9 @@ class MatroskaElementUInt(MatroskaElementBaseNum):
 
 class MatroskaElementSInt(MatroskaElementBaseNum):
    bfmt = '>q'
-   def __init__(self, etype, val, *args, **kwargs):
+   def __init__(self, val, *args, **kwargs):
       val.bit_length()
-      super().__init__(etype, val, *args, **kwargs)
+      super().__init__(val, *args, **kwargs)
    
    def _get_body_size(self):
       return math.ceil(((self.val + (self.val < 0)).bit_length() + 1)/8)
@@ -445,8 +446,8 @@ class MatroskaElementSInt(MatroskaElementBaseNum):
       buf[:pad_sz] = b'\xFF'*pad_sz
 
 class MatroskaElementFloat(MatroskaElementBaseNum):
-   def __init__(self, etype, val, body_size=8):
-      super().__init__(etype, val, body_size)
+   def __init__(self, val, body_size=8):
+      super().__init__(val, body_size)
       float(val)
       self.bfmt = self._get_bfmt(body_size)
       self._body_size = body_size
@@ -484,7 +485,7 @@ class MatroskaElementDate(MatroskaElementSInt):
    
    @classmethod
    def new(cls, ts):
-      rv = cls(cls.type, 0)
+      rv = cls(0)
       rv._val = ts
       return rv
    
@@ -493,8 +494,8 @@ class MatroskaElementDate(MatroskaElementSInt):
 
 
 class MatroskaElementStringBase(MatroskaElement):
-   def __init__(self, etype, val):
-      super().__init__(etype)
+   def __init__(self, val):
+      super().__init__()
       self.val = val
       val.encode(self.codec)
 
@@ -515,11 +516,11 @@ class MatroskaElementStringBase(MatroskaElement):
       return '<{0} {1!a}>'.format(self.__class__.__name__, self.val)
 
    @classmethod
-   def _build_from_file(cls, etype, body_size, f):
+   def _build_from_file(cls, body_size, f):
       val = f.read(body_size).decode(cls.codec)
       if (len(val) != body_size):
          raise MatroskaError('Domain read error.')
-      return cls(etype, val)
+      return cls(val)
 
 
 class MatroskaElementStringASCII(MatroskaElementStringBase):
@@ -619,7 +620,7 @@ class MatroskaElementCluster(MatroskaElementMaster):
    type = EBMLVInt(256095861)
    @classmethod
    def new(cls, timecode):
-      self = cls(cls.type, [MatroskaElementTimecode.new(timecode)])
+      self = cls([MatroskaElementTimecode.new(timecode)])
       self._tc = timecode
       return self
    
@@ -703,7 +704,7 @@ class MatroskaElementVideo(MatroskaElementMaster):
          sub.append(MatroskaElementPixelWidth.new(width))
       if not (height is None):
          sub.append(MatroskaElementPixelHeight.new(height))
-      return cls(cls.type, sub)
+      return cls(sub)
 
 @_mkv_type_reg
 class MatroskaElementAudio(MatroskaElementMaster):
@@ -714,7 +715,7 @@ class MatroskaElementAudio(MatroskaElementMaster):
          MatroskaElementSamplingFrequency.new(sfreq,8),
          MatroskaElementChannels.new(channels)
       ]
-      return cls(cls.type, sub)
+      return cls(sub)
 
 @_mkv_type_reg
 class MatroskaElementContentEncodings(MatroskaElementMaster):
@@ -924,7 +925,8 @@ class MatroskaElementBlock_r(MatroskaElement):
    _bfmt_subhdr = '>hB'
    _bfmt_subhdr_len = struct.calcsize(_bfmt_subhdr)
    def __init__(self, etype:int, tracknum:int, timecode:int, flags:int, keyframe:bool, data_r):
-      super().__init__(etype)
+      super().__init__()
+      self.type = etype
       
       struct.pack(self._bfmt_subhdr, timecode, flags)
       self.tracknum = MatroskaVInt(tracknum)
@@ -1276,7 +1278,7 @@ class MatroskaBuilder:
    def __init__(self, tcs, dur, ts=None):
       self.ebml_hdr = EBMLHeader.new([
          EBMLElementDocType.new('matroska'),
-         EBMLElementDocTypeVersion.new(2), 
+         EBMLElementDocTypeVersion.new(2),
          EBMLElementDocTypeReadVersion.new(2)
       ])
       
@@ -1574,6 +1576,18 @@ class MatroskaBuilder:
       f.seek(cue_off)
       cues.write_to_file(ctx)
 
+
+# ---------------------------------------------------------------- public module-level functions
+def make_mkvb_from_file(f):
+   els = ebml_ns_mkv.build_seq_from_file(f)
+   for el in els:
+      if (isinstance(el, MatroskaElementSegment)):
+         break
+   else:
+      raise ValueError('No segment in MKV file; got {0!a}.'.format(els))
+   
+   return el.make_mkvb()
+
 # ---------------------------------------------------------------- Test code
 def _dump_elements(seq, depth=0):
    for element in seq:
@@ -1586,18 +1600,6 @@ def _dump_elements(seq, depth=0):
          )))):
             _dump_elements(element.sub, depth+1)
 
-
-def make_mkvb_from_file(f):
-   els = MatroskaElement.build_seq_from_file(f)
-   for el in els:
-      if (isinstance(el, MatroskaElementSegment)):
-         break
-   else:
-      raise ValueError('No segment in MKV file; got {0!a}.'.format(els))
-   
-   return el.make_mkvb()
-
-
 def _main():
    """Run module selftests."""
    from sys import argv
@@ -1609,7 +1611,7 @@ def _main():
    
    fn = argv[1]
    f = open(fn, 'rb')
-   els = MatroskaElement.build_seq_from_file(f)
+   els = ebml_ns_mkv.build_seq_from_file(f)
    _dump_elements(els)
    f.seek(0)
    mb = make_mkvb_from_file(f)
