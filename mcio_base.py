@@ -29,7 +29,7 @@ class ContainerCodecError(ContainerError):
    pass
 
 class DataRef:
-   pass
+   __slots__ = ()
 
 class DataRefFile(DataRef):
    __slots__ = ('f', 'off', 'size')
@@ -67,6 +67,17 @@ class DataRefMemoryView(DataRef):
    
    def get_size(self):
       return len(self._data)
+
+class DataRefNull(DataRef):
+   __slots__ = ('_size')
+   def __init__(self, size):
+      self._size = size
+   
+   def get_data(self):
+      return (b'\x00'*self._size)
+   
+   def get_size(self):
+      return self._size
 
 
 class FourCC(int):

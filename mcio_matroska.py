@@ -143,88 +143,8 @@ class MatroskaSVInt(EBMLSVInt):
       if not (-1*self.val_lim <= x <= self.val_lim):
          raise MatroskaError('SVInt val {0} outside of defined domain.'.format(x))
 
-def _cls_default_set(cls):
-   try:
-      default_val = cls.default
-   except AttributeError:
-      cls.default = None
-   else:
-      cls.default = cls(default_val)
 
-class EBMLNamespace:
-   cls_build_default = None
-   def __init__(self, vint_type, bases=()):
-      self.vint_type = vint_type
-      self.bases = tuple(bases)
-      self.cls_map = {}
-   
-   def register_element(self, cls):
-      """Add supported EBML element cls to this namespace. Intended for use as a decorator."""
-      self.cls_map[cls.type] = cls
-      _cls_default_set(cls)
-      return cls
-   
-   def _etype2bff(self, etype, default_ok=True):
-      try:
-         rv = self.cls_map[etype]._build_from_file
-      except KeyError:
-         pass
-      else:
-         return rv
-      
-      for base in self.bases:
-         cls = base._etype2bff(etype, default_ok=False)
-         if not (cls is None):
-            return cls._build_from_file
-      
-      if ((not default_ok) or (self.cls_build_default is None)):
-         return None
-      
-      bff = self.cls_build_default._build_from_file
-      def rv(*args, **kwargs):
-         rv2 = bff(*args, **kwargs)
-         rv2.type = etype
-         return rv2
-      return rv
-   
-   def build_from_file(self, f):
-      """Deserialize one EBML element from filelike, returning it and the number of bytes consumed."""
-      bufsize = 8
-      off = f.tell()
-      (etype, sz_et) = self.vint_type.build_from_file(f)
-      off += sz_et
-      f.seek(off)
-      (size, sz_sz) = self.vint_type.build_from_file(f)
-      off += sz_sz
-      f.seek(off)
-      bff = self._etype2bff(etype)
-      rv = (bff(size, f), sz_sz+sz_et+size)
-      return rv
-
-   def build_seq_from_file(self, f, size_lim=None):
-      """Deserialize sequence of EBML elements from filelike, up to size_lim (or EOF if not specified)."""
-      off = f.tell()
-      rv = []
-      if (size_lim is None):
-         off_lim = f.seek(0,2)
-      else:
-         off_lim = off + size_lim
-      
-      while (off < off_lim):
-         f.seek(off)
-         (el, size) = self.build_from_file(f)
-         rv.append(el)
-         off += size
-      
-      if (off != off_lim):
-         raise EBMLError('Element size / filesize mismatch.')
-      return rv
-
-ebml_ns_ebml = EBMLNamespace(EBMLVInt)
-ebml_ns_mkv = EBMLNamespace(MatroskaVInt, (ebml_ns_ebml,))
-
-_ebml_type_reg = ebml_ns_ebml.register_element
-_mkv_type_reg = ebml_ns_mkv.register_element
+# ---------------------------------------------------------------- EBML base tag types
 
 class EBMLElement:
    def __format__(self, s):
@@ -234,13 +154,14 @@ class EBMLElement:
       raise EBMLError('Unrecognized element of type {0}; unable to dump.'.format(self.type))
 
    def _write_header(self, c, size):
-      size = MatroskaVInt(size)
+      if not (isinstance(size, MatroskaVInt)):
+         size = MatroskaVInt(size)
       return self.type.write_to_file(c) + size.write_to_file(c)
 
-
 class EBMLElementUnknown(EBMLElement):
-   def __init__(self, size, f):
+   def __init__(self, type, size, f):
       super().__init__()
+      self.type = type
       self.data_r = DataRefFile(f, f.tell(), size)
    
    def __deepcopy__(self, mdict):
@@ -252,13 +173,18 @@ class EBMLElementUnknown(EBMLElement):
       return (self.type.size + bd_size.size + bd_size)
 
    @classmethod
+   def _bff_curry(cls, etype):
+      def rv(*args, **kwargs):
+         return cls._build_from_file(etype, *args, **kwargs)
+      return rv
+
+   @classmethod
    def _build_from_file(cls, *args, **kwargs):
       return cls(*args, **kwargs)
 
    def write_to_file(self, c):
-      self._write_header(c, self.data_r.size)
-      c.f.write(self.data_r.get_data())
-ebml_ns_ebml.cls_build_default = EBMLElementUnknown
+      hl = self._write_header(c, self.data_r.size)
+      return (hl + c.f.write(self.data_r.get_data()))
 
 class MatroskaElement(EBMLElement):
    @classmethod
@@ -272,16 +198,21 @@ class MatroskaElementMaster(MatroskaElement):
       self.sub = sub
 
    def __deepcopy__(self, mdict):
-      return type(self)(self.type, deepcopy(self.sub,mdict))
+      return type(self)(deepcopy(self.sub,mdict))
 
    @property
    def val(self):
       return self.sub
 
    def write_to_file(self, c):
-      self._write_header(c, MatroskaVInt(sum(e.get_size() for e in self.sub)))
-      for e in self.sub:
-         e.write_to_file(c)
+      blen = sum(e.get_size() for e in self.sub)
+      hlen = self._write_header(c, MatroskaVInt(blen))
+      
+      blen2 = sum(e.write_to_file(c) for e in self.sub)
+      if (blen != blen2):
+         raise MatroskaError('Output sanity check failed in {0}: Wrote {1} bytes, expected {2}.'.format(self, blen2, blen))
+      
+      return (blen + hlen)
 
    def get_size(self):
       bd_size = MatroskaVInt(sum(c.get_size() for c in self.sub))
@@ -291,7 +222,12 @@ class MatroskaElementMaster(MatroskaElement):
       for e in self.sub:
          if (isinstance(e, cls)):
             return e
-   
+      
+   def get_subval_by_cls(self, cls):
+      for e in self.sub:
+         if (isinstance(e, cls)):
+            return e.val
+
    def set_sub(self, new_e):
       for i in range(len(self.sub)):
          e = self.sub[i]
@@ -304,21 +240,16 @@ class MatroskaElementMaster(MatroskaElement):
    def get_subl_by_cls(self, cls):
       for e in self.sub:
          if (isinstance(e, cls)):
-            yield e      
+            yield e
    
-   def get_subval_by_cls(self, cls):
-      for e in self.sub:
-         if (isinstance(e, cls)):
-            return e.val
-
+   def remove_subvals_by_cls(self, cls):
+      self.sub = [e for e in self.sub if not (isinstance(e,cls))]
+   
    @classmethod
    def _build_from_file(cls, body_size, f):
       sub = ebml_ns_mkv.build_seq_from_file(f, body_size)
       return cls(sub)
 
-@_ebml_type_reg
-class EBMLHeader(MatroskaElementMaster):
-   type = EBMLVInt(172351395)
 
 class MatroskaElementBinary(MatroskaElement):
    __slots__ = ('type', 'data_r')
@@ -327,7 +258,7 @@ class MatroskaElementBinary(MatroskaElement):
       self.data_r = data_r
 
    def __deepcopy__(self, mdict):
-      return type(self)(self.type, self.data_r)
+      return type(self)(self.data_r)
 
    @property
    def val(self):
@@ -336,17 +267,20 @@ class MatroskaElementBinary(MatroskaElement):
    def __format__(self, fs):
       return '<{0} {1}>'.format(self.__class__.__name__, self.data_r)
 
-   def get_size(self):
-      bd_size = self.data_r.get_size()
-      return (self.type.size + MatroskaVInt(bd_size).size + bd_size)
+   def _get_body_size(self):
+      return MatroskaVInt(self.data_r.get_size())
 
+   def get_size(self):
+      bd_size = self._get_body_size()
+      return (self.type.size + bd_size.size + bd_size)
+   
    def write_to_file(self, c):
       bd = self.data_r.get_data()
-      self._write_header(c, MatroskaVInt(len(bd)))
-      rv = c.f.write(bd)
-      if (rv != len(bd)):
+      hl = self._write_header(c, self._get_body_size())
+      blw = c.f.write(bd)
+      if (blw != len(bd)):
          raise IOError()
-      return rv
+      return (hl+blw)
       
    @classmethod
    def new(cls, data, *args, **kwargs):
@@ -368,7 +302,7 @@ class MatroskaElementBaseNum(MatroskaElement):
       self.val = val
 
    def __deepcopy__(self, mdict):
-      return type(self)(self.type, deepcopy(self.val,mdict), self._get_body_size())
+      return type(self)(deepcopy(self.val,mdict), self._get_body_size())
 
    def write_to_file(self, c, _val=None):
       if (_val is None):
@@ -395,7 +329,7 @@ class MatroskaElementBaseNum(MatroskaElement):
       return sub_cls(*sub_args)
       
    @classmethod
-   def _get_data_from_file(cls, etype, body_size, f):
+   def _get_data_from_file(cls, body_size, f):
       bfmt = cls._get_bfmt(body_size)
       
       buf = bytearray(struct.calcsize(bfmt))
@@ -409,7 +343,7 @@ class MatroskaElementBaseNum(MatroskaElement):
          raise MatroskaError('Domain read error.')
       
       (val,) = struct.unpack(bfmt, buf)
-      return (cls, etype, val, body_size)
+      return (cls, val, body_size)
    
    @classmethod
    def _adjust_padding(cls, buf, pad_sz):
@@ -500,7 +434,7 @@ class MatroskaElementStringBase(MatroskaElement):
       val.encode(self.codec)
 
    def __deepcopy__(self, mdict):
-      return type(self)(self.type, deepcopy(self.val,mdict))
+      return type(self)(deepcopy(self.val,mdict))
 
    def write_to_file(self, c):
       body_data = self.val.encode(self.codec)
@@ -529,8 +463,90 @@ class MatroskaElementStringASCII(MatroskaElementStringBase):
 class MatroskaElementStringUTF8(MatroskaElementStringBase):
    codec = 'utf-8'
 
+def _cls_default_set(cls):
+   try:
+      default_val = cls.default
+   except AttributeError:
+      cls.default = None
+   else:
+      cls.default = cls(default_val)
+
+# ---------------------------------------------------------------- EBML namespaces
+class EBMLNamespace:
+   cls_build_default = EBMLElementUnknown
+   def __init__(self, vint_type, bases=()):
+      self.vint_type = vint_type
+      self.bases = tuple(bases)
+      self.cls_map = {}
+   
+   def register_element(self, cls):
+      """Add supported EBML element cls to this namespace. Intended for use as a decorator."""
+      self.cls_map[cls.type] = cls
+      _cls_default_set(cls)
+      return cls
+   
+   def _etype2bff(self, etype, default_ok=True):
+      try:
+         rv = self.cls_map[etype]._build_from_file
+      except KeyError:
+         pass
+      else:
+         return rv
+      
+      for base in self.bases:
+         rv = base._etype2bff(etype, default_ok=False)
+         if not (rv is None):
+            return rv
+      
+      if ((not default_ok) or (self.cls_build_default is None)):
+         return None
+      
+      return self.cls_build_default._bff_curry(etype)
+   
+   def build_from_file(self, f):
+      """Deserialize one EBML element from filelike, returning it and the number of bytes consumed."""
+      bufsize = 8
+      off = f.tell()
+      (etype, sz_et) = self.vint_type.build_from_file(f)
+      off += sz_et
+      f.seek(off)
+      (size, sz_sz) = self.vint_type.build_from_file(f)
+      off += sz_sz
+      f.seek(off)
+      bff = self._etype2bff(etype)
+      rv = (bff(size, f), sz_sz+sz_et+size)
+      return rv
+
+   def build_seq_from_file(self, f, size_lim=None):
+      """Deserialize sequence of EBML elements from filelike, up to size_lim (or EOF if not specified)."""
+      off = f.tell()
+      rv = []
+      if (size_lim is None):
+         off_lim = f.seek(0,2)
+      else:
+         off_lim = off + size_lim
+      
+      while (off < off_lim):
+         f.seek(off)
+         (el, size) = self.build_from_file(f)
+         rv.append(el)
+         off += size
+      
+      if (off != off_lim):
+         raise EBMLError('Element size / filesize mismatch.')
+      return rv
+
+ebml_ns_ebml = EBMLNamespace(EBMLVInt)
+ebml_ns_mkv = EBMLNamespace(MatroskaVInt, (ebml_ns_ebml,))
+
+_ebml_type_reg = ebml_ns_ebml.register_element
+_mkv_type_reg = ebml_ns_mkv.register_element
 
 # ---------------------------------------------------------------- Master elements
+@_ebml_type_reg
+class EBMLHeader(MatroskaElementMaster):
+   type = EBMLVInt(172351395)
+
 @_mkv_type_reg
 class MatroskaElementSignatureSlot(MatroskaElementMaster):
    type = EBMLVInt(190023271)
@@ -591,13 +607,13 @@ class MatroskaElementSegment(MatroskaElementMaster):
          mb.add_track_by_entry(self._iter_frames(tn, sdd), te_cp, make_cues=(tn in cue_track_set))
       
       return mb
-         
    
    def write_to_file(self, c):
-      self._write_header(c, MatroskaVInt(sum(e.get_size() for e in self.sub)))
-      c.seg_off = c.f.seek(0,2)
+      rv = self._write_header(c, MatroskaVInt(sum(e.get_size() for e in self.sub)))
+      c.seg_off = c.f.tell()
       for e in self.sub:
-         e.write_to_file(c)
+         rv += e.write_to_file(c)
+      return rv
 
 @_mkv_type_reg
 class MatroskaElementSeekHead(MatroskaElementMaster):
@@ -626,12 +642,11 @@ class MatroskaElementCluster(MatroskaElementMaster):
    
    def write_to_file(self, c):
       if not (c.callback_cluster is None):
-         c.callback_cluster(self, c.f.seek(0,2) - c.seg_off)
-      super().write_to_file(c)
+         c.callback_cluster(self, c.f.tell() - c.seg_off)
+      return super().write_to_file(c)
    
    def _get_tc(self):
       return self._tc
-      
 
 @_mkv_type_reg
 class MatroskaElementSilentTracks(MatroskaElementMaster):
@@ -683,8 +698,7 @@ class MatroskaElementTracks(MatroskaElementMaster):
       return rv
    
    def get_track(self, idx):
-      return self.sub[idx-1]
-         
+      return self.sub[idx-1]   
 
 @_mkv_type_reg
 class MatroskaElementTrackEntry(MatroskaElementMaster):
@@ -742,9 +756,15 @@ class MatroskaElementCues(MatroskaElementMaster):
    type = EBMLVInt(206814059)
    def write_to_file(self, c):
       if not (c.callback_cues is None):
-         c.callback_cues(c.f.seek(0,2))
+         c.callback_cues(c.f.tell())
       
-      super().write_to_file(c)
+      return super().write_to_file(c)
+   
+   def update_ccps(self, co_map):
+      for cp in self.sub:
+         for ctp in cp.get_subl_by_cls(MatroskaElementCueTrackPositions):
+            ccp = ctp.get_sub_by_cls(MatroskaElementCueClusterPosition)
+            ccp.val = co_map[ccp._clust_id]
 
 @_mkv_type_reg
 class MatroskaElementCuePoint(MatroskaElementMaster):
@@ -759,7 +779,7 @@ class MatroskaElementCueTrackPositions(MatroskaElementMaster):
    
    @classmethod
    def new(cls, tracknum, clust_id, cbn):
-      ccp = MatroskaElementCueClusterPosition.new(0)
+      ccp = MatroskaElementCueClusterPosition.new()
       ccp._clust_id = clust_id
       rv = super().new([
          MatroskaElementCueTrack.new(tracknum),
@@ -832,6 +852,51 @@ class MatroskaElementCRC32(MatroskaElementBinary):
 @_mkv_type_reg
 class MatroskaElementVoid(MatroskaElementBinary):
    type = EBMLVInt(108)
+   def __init__(self, *args, **kwargs):
+      super().__init__(*args, **kwargs)
+      self._bd_size = MatroskaVInt(self.data_r.get_size())
+      
+   def _get_body_size(self):
+      rv = self._bd_size
+      if (rv != self.data_r.get_size()):
+         raise ValueError('Internal data structure mismatch; cached bd_size = {0} != {1} = current body size.'.format(
+            rv, self.data_r.get_size()))
+      return rv
+   
+   @classmethod
+   def new_by_size(cls, full_size):
+      vint_len_max = 8
+      # Modifying just the body size will not allow us to fit full body sizes of the form n=(128**i+i), i.e. 129, 16386,
+      # 2097155, etc. due to the way size vint lengths scale with body length. The case of (i=0) is completely impossible to
+      # satisfy; for all others, we can compensate by padding our size field by one byte.
+      # Catch these cases here and determine size vint length padding, if any.
+      i = 1
+      n = 0
+      while (n < full_size):
+         n = (1 << (7*i)) + i
+         i += 1
+      
+      sz_len_pad = (full_size == n)
+      
+      # Simple incremental approximation algorithm for finding the right body size. Probably not the most elegant way to do
+      # this, but it should work.
+      bd_sz = full_size
+      bd_sz_set = set()
+      while (not (bd_sz in bd_sz_set)):
+         bd_sz_set.add(bd_sz)
+         void = cls(DataRefNull(bd_sz))
+         sz_diff = full_size - void.get_size()
+         if (0 <= sz_diff <= sz_len_pad):
+            void._bd_size.size += sz_len_pad
+            if (void._bd_size.size > vint_len_max):
+               raise MatroskaError('Unable to craft Void element with precise length {0}; size vint length overflow.'.format(full_size))
+            
+            return void
+         bd_sz += sz_diff
+         bd_sz = max(bd_sz, 0)
+      
+      raise MatroskaError('Unable to craft Void element with precise length {0}.'.format(full_size))
+      
 
 @_mkv_type_reg
 class MatroskaElementSegmentUID(MatroskaElementBinary):
@@ -953,11 +1018,11 @@ class MatroskaElementBlock_r(MatroskaElement):
    def write_to_file(self, c):
       bd = self.tracknum.get_bindata() + struct.pack(self._bfmt_subhdr, self.timecode, self.flags) + \
          self.data_r.get_data()
-      self._write_header(c, MatroskaVInt(len(bd)))
-      rv = c.f.write(bd)
-      if (rv != len(bd)):
+      hl = self._write_header(c, MatroskaVInt(len(bd)))
+      bl = c.f.write(bd)
+      if (bl != len(bd)):
          raise IOError()
-      return rv
+      return (hl + bl)
 
 # ---------------------------------------------------------------- UInt elements
 @_ebml_type_reg
@@ -995,20 +1060,14 @@ class MatroskaElementPrevSize(MatroskaElementUInt):
 @_mkv_type_reg
 class MatroskaElementCueClusterPosition(MatroskaElementUInt):
    type = EBMLVInt(113)
-   def _get_body_size(self):
-      # Setting this to 64bits should be plenty for currently realistic filesizes.
-      rv = 8
-      if (super()._get_body_size() > rv):
-         raise ValueError('Size limit condition violated :(')
-      return rv
-   
    def write_to_file(self, c):
-      self._clust_id
-      co = c.cluster_offsets
-      if not (co is None):
-         self.val = co[self._clust_id]
       return super().write_to_file(c)
-         
+   
+   @classmethod
+   def new(cls, cp=None):
+      if (cp is None):
+         cp = (1 << 64) - 1
+      return super().new(cp)
 
 @_mkv_type_reg
 class MatroskaElementCueTime(MatroskaElementUInt):
@@ -1192,7 +1251,6 @@ class _OutputCtx:
       self.f = f
       self.callback_cluster = None
       self.callback_cues = None
-      self.cluster_offsets = None
 
 class MatroskaFrame:
    def __init__(self, timecode, flags, tc_dependencies, data_r, dur=None):
@@ -1549,7 +1607,10 @@ class MatroskaBuilder:
    def write_to_file(self, f):
       (clusters, cues) = self._build_clusters()
       cue_tvs = sorted(cues.keys())
-      cues = MatroskaElementCues.new([cues[tv] for tv in cue_tvs])
+      # Void elements have a minimum size of two. We insert one here because if we didn't, we might end up with exactly
+      # one byte of empty space after the cues size adjustment, and would be unable to fill it with a seperate void element
+      # otherwise.
+      cues = MatroskaElementCues.new([cues[tv] for tv in cue_tvs] + [MatroskaElementVoid.new_by_size(2)])
       seg_sub = [self.mkv_info, self.tracks, cues]
       seg_sub.extend(clusters)
       seg = MatroskaElementSegment.new(seg_sub)
@@ -1568,14 +1629,25 @@ class MatroskaBuilder:
       
       ctx.callback_cluster = cc
       ctx.callback_cues = ccues
+      
+      cues_sz_base = cues.get_size()
       seg.write_to_file(ctx)
+      cues.remove_subvals_by_cls(MatroskaElementVoid)
       
       ctx.callback_cluster = None
       ctx.callback_cues = None
-      ctx.cluster_offsets = clust_offs
+      
+      cues.update_ccps(clust_offs)
+      
       f.seek(cue_off)
-      cues.write_to_file(ctx)
-
+      l = cues.write_to_file(ctx)
+      cues_sz = cues.get_size()
+      if (cues_sz > cues_sz_base):
+         raise MatroskaError("Cues size guessing failed. :( This shouldn't happen, and indicates a bug in yavdlt.")
+      if (cues_sz < cues_sz_base):
+         f.seek(cue_off+cues_sz)
+         void = MatroskaElementVoid.new_by_size(cues_sz_base - cues_sz)
+         void.write_to_file(ctx)
 
 # ---------------------------------------------------------------- public module-level functions
 def make_mkvb_from_file(f):
