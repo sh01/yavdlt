@@ -151,6 +151,10 @@ class ASSSubtitle:
       if (self.start > other.start): return 1
       if (self.dur < other.dur): return -1
       if (self.dur > other.dur): return 1
+      if (self.name is not None is not other.name):
+         if (self.name < other.name): return -1
+         if (self.name > other.name): return 1
+      
       if (self.text < other.text): return -1
       if (self.text > other.text): return 1
       if (id(self) < id(other)): return -1
