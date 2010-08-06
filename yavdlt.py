@@ -862,7 +862,7 @@ class YTVideoRef:
             raise YTError("Download resume failed; mismatch with existing tail data.")
       
          cl_g += len(prefix_data)
-         self.log(15, 'Beginning of remote file matches existing data; resuming download.')
+         self.log(15, 'End local file matches remote data; resuming download.')
       
       while (True):
          data_read = res.read(1024*1024)
