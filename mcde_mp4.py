@@ -331,7 +331,6 @@ class MovBoxSampleTableRepeats(MovBoxSampleTableBase):
                yield data[0]
             else:
                yield data
-   
 
 class MovSampleEntry(MovBoxBranch):
    bfmt = '>6xH'
@@ -386,7 +385,7 @@ class MovBoxSampleDescription(MovFullBoxBranch):
       try:
          self.sub_cls_default = self.sub_cls_map[self.c._track_type]
       except KeyError:
-         self.sub_cls_default = MovSampleEntry
+         self.sub_cls_default = MovSampleEntryMpeg
       
       super()._init2()
       (elcount,) = struct.unpack(self.bfmt, self.get_body()[:self.bfmt_len])
@@ -445,6 +444,12 @@ class MovSampleEntrySound(MovSampleEntry):
 class MovSampleEntryVideo_AAC(MovSampleEntrySound):
    type = FourCC('mp4a')
 
+class MovSampleEntryMpeg(MovSampleEntry):
+   type = FourCC('mp4s')
+   def _init2(self):
+      super()._init2()
+      MovBoxBranch._init2(self)
+
 class _CPData:
    def __init__(self, data, off=0):
       self.data = data
@@ -482,22 +487,26 @@ class _DecoderConfigDescriptor(collections.namedtuple('_dcdb', 'opi si bufsize b
       bs = (data2 & 16777215)
       si = (data2 >> 24)
       
-      dsi_tag = bd.get_byte()
-      if (dsi_tag == 0x24): #DecSpecificInfoShortTag
-         dsi_len = bd.get_byte()
-      elif (dsi_tag == 0xE0): #DecSpecificInfoLargeTag
-         (dsi_len,) = bd.unpack('>L')
-      elif (dsi_tag == 0x05):
-         # This isn't defined in ISO/IEC 14496-1 ... but empirical tests on files in the wild indicate this is probably
-         # correct.
-         dsi_len = bd.get_length()
+      if (bd.len_remainder()):
+         dsi_tag = bd.get_byte()
+         if (dsi_tag == 0x24): #DecSpecificInfoShortTag
+            dsi_len = bd.get_byte()
+         elif (dsi_tag == 0xE0): #DecSpecificInfoLargeTag
+            (dsi_len,) = bd.unpack('>L')
+         elif (dsi_tag == 0x05):
+            # This isn't defined in ISO/IEC 14496-1 ... but empirical tests on files in the wild indicate this is probably
+            # correct.
+            dsi_len = bd.get_length()
+         else:
+            raise ValueError('Unknown tag {0} for DSI section.'.format(dsi_tag))
+      
+         if (dsi_len != bd.len_remainder()):
+            raise ValueError('DecoderSpecificInfo section length (dsi_tag {0}) mismatch; read length value {1}, while container indicates a length of {2}.'.format(dsi_tag, dsi_len, bd.len_remainder()))
+      
+         dsi = bd.data[bd.off:]
       else:
-         raise ValueError('Unknown tag {0} for DSI section.'.format(dsi_tag))
+         dsi = None
       
-      if (dsi_len != bd.len_remainder()):
-         raise ValueError('DecoderSpecificInfo section length (dsi_tag {0}) mismatch; read length value {1}, while container indicates a length of {2}.'.format(dsi_tag, dsi_len, bd.len_remainder()))
-      
-      dsi = bd.data[bd.off:]
       return cls(opi, si, bs, br_max, br_avg, dsi)
 
 @_mov_box_type_reg
