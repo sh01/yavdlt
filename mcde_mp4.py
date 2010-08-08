@@ -442,7 +442,7 @@ class MovSampleEntrySound(MovSampleEntry):
          self.dri, self.channel_count, self.sample_size, self.sample_rate)
 
 @_mov_box_type_reg
-class MovSampleEntryVideo_AVC1(MovSampleEntrySound):
+class MovSampleEntryVideo_AAC(MovSampleEntrySound):
    type = FourCC('mp4a')
 
 class _DecoderConfigDescriptor(collections.namedtuple('_dcdb', 'opi si bufsize br_max br_avg dsi')):
