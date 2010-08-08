@@ -288,22 +288,28 @@ class MovBoxSampledataBase(MovFullBox):
       self._parse_header()
 
 class MovBoxSampleTableBase(MovBoxSampledataBase):
+   def _data_table_present(self):
+      return True
+   
    def _init2(self):
       super()._init2()
       data = memoryview(self.get_body())
       i = self.bfmt_len
-      entry_data = []
-      bfmt_entry_len = struct.calcsize(self.bfmt_entry)
-      onetuples = (len(self.bfmt_entry.lstrip('<>!')) == 1)
+      if (self._data_table_present()):
+         entry_data = []
+         bfmt_entry_len = struct.calcsize(self.bfmt_entry)
+         onetuples = (len(self.bfmt_entry.lstrip('<>!')) == 1)
       
-      for j in range(self._elnum):
-         entry_val = struct.unpack(self.bfmt_entry, data[i:i+bfmt_entry_len])
-         if (onetuples):
-            (entry_val,) = entry_val
+         for j in range(self._elnum):
+            entry_val = struct.unpack(self.bfmt_entry, data[i:i+bfmt_entry_len])
+            if (onetuples):
+               (entry_val,) = entry_val
          
-         entry_data.append(entry_val)   
-         i += bfmt_entry_len   
+            entry_data.append(entry_val)   
+            i += bfmt_entry_len   
       
+      else:
+         entry_data = None
       self.entry_data = entry_data
 
 class MovBoxSampleTableSimple(MovBoxSampleTableBase):
@@ -561,6 +567,9 @@ class MovBoxSampleSize(MovBoxSampleTableSimple):
       if (ss == 0):
          ss = None
       self.sample_size = ss
+   
+   def _data_table_present(self):
+      return (self.sample_size is None)
    
    def get_ss(self, i):
       return (self.sample_size or self.entry_data[i])
