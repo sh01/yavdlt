@@ -334,8 +334,13 @@ class MovSampleEntry(MovBoxBranch):
       (self.dri,) = struct.unpack(self.bfmt, self.get_body()[:self.bfmt_len])
    
    def get_codec_init_data(self):
-      """Return codec-specific initialization data. This version always returns None."""
-      return None
+      """Return codec-specific initialization data, H264 variant."""
+      try:
+         esds = self.find_subbox('esds')
+      except ValueError:
+         return None
+      
+      return esds.get_dsi()
    
    def _format_f(self, fs):
       return '<{0} type: {1} dri: {2}>'.format(type(self).__name__, self.type, self.dri)
@@ -416,14 +421,6 @@ class MovSampleEntrySound(MovSampleEntry):
 @_mov_box_type_reg
 class MovSampleEntryVideo_AVC1(MovSampleEntrySound):
    type = FourCC('mp4a')
-   def get_codec_init_data(self):
-      """Return codec-specific initialization data, H264 variant."""
-      try:
-         esds = self.find_subbox('esds')
-      except ValueError:
-         return None
-      
-      return esds.get_dsi()
 
 class _DecoderConfigDescriptor(collections.namedtuple('_dcdb', 'opi si bufsize br_max br_avg dsi')):
    bfmt = '>BBBLLL'
