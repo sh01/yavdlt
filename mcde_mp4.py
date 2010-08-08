@@ -434,7 +434,7 @@ class _DecoderConfigDescriptor(collections.namedtuple('_dcdb', 'opi si bufsize b
 @_mov_box_type_reg
 class MovBoxCodecPrivate_EsDescriptor(MovFullBox):
    type = FourCC('esds')
-   bfmt = '>BBHB'
+   bfmt = '>HB'
    bfmt_len = struct.calcsize(bfmt)
    
    def get_dsi(self):
@@ -446,33 +446,38 @@ class MovBoxCodecPrivate_EsDescriptor(MovFullBox):
       super()._init2()
       bd = self.get_body()
       self.dcd_data = []
-      (tag, length, es_id, flags) = struct.unpack(self.bfmt, bd[:self.bfmt_len])
-      if (tag != 3):
-         raise ValueError('Unexpected ES tag value {0}.'.format(tag))
-      if (length != len(bd)-2):
-         raise ValueError('Unexpected ES body len {0}; expected {1}.'.format(length,len(bd)-2))
-      
-      off = self.bfmt_len
+      off = 0
       
       def get_byte():
-         return struct.unpack('>B', bd[off:off+1])[0]
+         nonlocal off
+         rv = struct.unpack('>B', bd[off:off+1])[0]
+         off += 1
+         return rv
       
       def get_length():
-         nonlocal off
          rv = 0
          for i in range(4):
             d = get_byte()
-            off += 1
             rv <<= 7
             rv |= (d & 127)
             if not (d & 128):
                break
          return rv
       
+      tag = get_byte()
+      length = get_length()
+      (es_id, flags) = struct.unpack(self.bfmt, bd[off:off+self.bfmt_len])
+      
+      if (tag != 3):
+         raise ValueError('Unexpected ES tag value {0}.'.format(tag))
+      if (length != len(bd)-off):
+         raise ValueError('Unexpected ES body len {0}; expected {1}.'.format(length,len(bd)-2))
+      
+      off += self.bfmt_len
+      
       # DecoderConfigDescriptor parsing
       while (len(bd)-off > 0):
          tag = get_byte()
-         off += 1
          length = get_length()
          data = bd[off:off+length]
          off += length
