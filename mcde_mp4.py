@@ -345,7 +345,23 @@ class MovSampleEntry(MovBoxBranch):
    def _format_f(self, fs):
       return '<{0} type: {1} dri: {2}>'.format(type(self).__name__, self.type, self.dri)
 
+@_mov_box_type_reg
+class MovBoxPixelAspectRatio(MovBox):
+   type = FourCC('pasp')
+   bfmt = '>LL'
+   bfmt_hlen = struct.calcsize(bfmt)
+   def _init2(self):
+      (self.hs, self.vs) = struct.unpack(self.bfmt, self.get_body())
+      self.hlen += self.bfmt_hlen
+      super()._init2()
    
+   def get_ar(self):
+      return (self.hs/self.vs)
+   
+   def __format__(self, fs):
+      return '<{0} ar: {1}>'.format(type(self).__name__, self.get_ar())
+   
+
 @_mov_box_type_reg
 class MovBoxSampleDescription(MovFullBoxBranch):
    type = FourCC('stsd')
