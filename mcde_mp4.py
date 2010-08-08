@@ -445,23 +445,65 @@ class MovSampleEntrySound(MovSampleEntry):
 class MovSampleEntryVideo_AAC(MovSampleEntrySound):
    type = FourCC('mp4a')
 
+class _CPData:
+   def __init__(self, data, off=0):
+      self.data = data
+      self.off = off
+   
+   def get_byte(self):
+      rv = struct.unpack('>B', self.data[self.off:self.off+1])[0]
+      self.off += 1
+      return rv
+   
+   def get_length(self):
+      rv = 0
+      for i in range(4):
+         d = self.get_byte()
+         rv <<= 7
+         rv |= (d & 127)
+         if not (d & 128):
+            break
+      return rv
+   
+   def unpack(self, bfmt):
+      blen = struct.calcsize(bfmt)
+      rv = struct.unpack(bfmt, self.data[self.off:self.off+blen])
+      self.off += blen
+      return rv
+   
+   def len_remainder(self):
+      return len(self.data)-self.off
+
 class _DecoderConfigDescriptor(collections.namedtuple('_dcdb', 'opi si bufsize br_max br_avg dsi')):
-   bfmt = '>BBBLLL'
-   bfmt_len = struct.calcsize(bfmt)
+   bfmt = '>BLLL'
    @classmethod
    def build_from_bindata(cls, bd):
-      (opi, si, bs, data2, br_max, br_avg) = struct.unpack(cls.bfmt, bd[:cls.bfmt_len])
+      (opi, data2, br_max, br_avg) = bd.unpack(cls.bfmt)
       bs = (data2 & 16777215)
       si = (data2 >> 24)
-      dsi = bd[cls.bfmt_len:]
-      return cls(opi, si, bs, br_max, br_avg, dsi)
       
+      dsi_tag = bd.get_byte()
+      if (dsi_tag == 0x24): #DecSpecificInfoShortTag
+         dsi_len = bd.get_byte()
+      elif (dsi_tag == 0xE0): #DecSpecificInfoLargeTag
+         (dsi_len,) = bd.unpack('>L')
+      elif (dsi_tag == 0x05):
+         # This isn't defined in ISO/IEC 14496-1 ... but empirical tests on files in the wild indicate this is probably
+         # correct.
+         dsi_len = bd.get_length()
+      else:
+         raise ValueError('Unknown tag {0} for DSI section.'.format(dsi_tag))
+      
+      if (dsi_len != bd.len_remainder()):
+         raise ValueError('DecoderSpecificInfo section length (dsi_tag {0}) mismatch; read length value {1}, while container indicates a length of {2}.'.format(dsi_tag, dsi_len, bd.len_remainder()))
+      
+      dsi = bd.data[bd.off:]
+      return cls(opi, si, bs, br_max, br_avg, dsi)
 
 @_mov_box_type_reg
 class MovBoxCodecPrivate_EsDescriptor(MovFullBox):
    type = FourCC('esds')
    bfmt = '>HB'
-   bfmt_len = struct.calcsize(bfmt)
    
    def get_dsi(self):
       if (self.dcd_data):
@@ -470,47 +512,29 @@ class MovBoxCodecPrivate_EsDescriptor(MovFullBox):
    
    def _init2(self):
       super()._init2()
-      bd = self.get_body()
+      bd = _CPData(self.get_body())
       self.dcd_data = []
-      off = 0
       
-      def get_byte():
-         nonlocal off
-         rv = struct.unpack('>B', bd[off:off+1])[0]
-         off += 1
-         return rv
-      
-      def get_length():
-         rv = 0
-         for i in range(4):
-            d = get_byte()
-            rv <<= 7
-            rv |= (d & 127)
-            if not (d & 128):
-               break
-         return rv
-      
-      tag = get_byte()
-      length = get_length()
-      (es_id, flags) = struct.unpack(self.bfmt, bd[off:off+self.bfmt_len])
+      tag = bd.get_byte()
+      length = bd.get_length()
       
       if (tag != 3):
          raise ValueError('Unexpected ES tag value {0}.'.format(tag))
-      if (length != len(bd)-off):
+      if (length != bd.len_remainder()):
          raise ValueError('Unexpected ES body len {0}; expected {1}.'.format(length,len(bd)-2))
       
-      off += self.bfmt_len
+      (es_id, flags) = bd.unpack(self.bfmt)
       
       # DecoderConfigDescriptor parsing
-      while (len(bd)-off > 0):
-         tag = get_byte()
-         length = get_length()
-         data = bd[off:off+length]
-         off += length
+      while (bd.len_remainder() > 0):
+         tag = bd.get_byte()
+         length = bd.get_length()
+         data = _CPData(bd.data[bd.off:bd.off+length])
+         bd.off += length
          if (tag == 4):
             self.dcd_data.append(_DecoderConfigDescriptor.build_from_bindata(data))
       
-      if (len(bd) != off):
+      if (bd.len_remainder()):
          raise ValueError('Failed to parse ESDS body data {0} correctly: length {{over,under}}run.'.format(bd))
       
 
