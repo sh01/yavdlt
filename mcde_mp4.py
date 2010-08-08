@@ -624,10 +624,6 @@ class MovBoxMovie(MovBoxBranch):
          mdhd = track.get_mdhd()
          se = track.get_sample_entry()
          mp4_codec = se.type
-         try:
-            codec_id = self.CODEC2ID[mp4_codec]
-         except KeyError as exc:
-            raise MovParserError('Unknown mp4 codec {0!a}.'.format(mp4_codec)) from exc
          
          htype = track.find_subbox(b'mdia').find_subbox(b'hdlr').handler_type
          if (htype == self._HTYPE_VIDE):
@@ -638,6 +634,11 @@ class MovBoxMovie(MovBoxBranch):
             at_args = (round(se.sample_rate), se.channel_count)
          else:
             continue
+         
+         try:
+            codec_id = self.CODEC2ID[mp4_codec]
+         except KeyError as exc:
+            raise MovParserError('Unknown mp4 codec {0!a}.'.format(mp4_codec)) from exc
          
          ts_fact = (ts_base / mdhd.time_scale)
          mcd = track._get_most_common_dur()
