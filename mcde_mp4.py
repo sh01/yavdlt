@@ -246,9 +246,16 @@ class MovBoxFtyp(MovBox):
       self.major_brand = FourCC(major_brand)
       self.minor_brand = FourCC(minor_brand)
       self.hlen += self.bfmt_len
+      
+      self.compatible_brands = cb = []
+      off = 0
+      bd = self.get_body()
+      while (off < len(bd)):
+         cb.append(FourCC(struct.unpack('>L', bd[off:off+4])[0]))
+         off += 4
    
    def _format_f(self, fs):
-      return '<{0} type: {1} major: {2} minor: {3}>'.format(type(self).__name__, self.type, self.major_brand, self.minor_brand)
+      return '<{0} type: {1} major: {2} minor: {3} compat: {4}>'.format(type(self).__name__, self.type, self.major_brand, self.minor_brand, self.compatible_brands)
 
 @_mov_box_type_reg
 class MovBoxMovieHeader(MovFullBox):
