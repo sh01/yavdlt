@@ -1104,9 +1104,9 @@ def arg2vidset(s, fallback=True):
    raise ValueError('Unable to get video id from string {0!a}.'.format(s))
 
 
-_re_embedded_split = re.compile('<object')
-_re_embedded_url1 = re.compile('<param name="movie" value="(?P<yt_url>http://[^"/]*youtube(?:-nocookie)?\.[^"/]+/v/[^"]+)"')
-_re_embedded_url2 = re.compile('<embed src="(?P<yt_url>http://[^"/]*youtube(?:-nocookie)?\.[^"/]+/v/[^"]+)"')
+_re_embedded_split = re.compile(b'<object')
+_re_embedded_url1 = re.compile(b'<param name="movie" value="(?P<yt_url>http://[^"/]*youtube(?:-nocookie)?\.[^"/]+/v/[^"]+)"')
+_re_embedded_url2 = re.compile(b'<embed src="(?P<yt_url>http://[^"/]*youtube(?:-nocookie)?\.[^"/]+/v/[^"]+)"')
 
 def get_embedded_yturls(url):
    import logging
@@ -1123,9 +1123,9 @@ def get_embedded_yturls(url):
       m1 = _re_embedded_url1.search(fragment)
       m2 = _re_embedded_url2.search(fragment)
       if not (m1 is None):
-         urls.append(m1.groupdict()['yt_url'])
+         urls.append(m1.groupdict()['yt_url'].decode('ascii'))
       if not (m2 is None):
-         urls.append(m2.groupdict()['yt_url'])
+         urls.append(m2.groupdict()['yt_url'].decode('ascii'))
    
    #urls = [xml_unescape(u) for u in urls]
    return set(urls)
