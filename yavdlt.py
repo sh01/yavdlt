@@ -546,7 +546,7 @@ class YTVideoRef:
    re_fmt_url_map_markup = re.compile(r'\? "(?P<umm>.*?fmt_url_map=.*?>)"')
    re_fmt_url_map = re.compile('fmt_url_map=(?P<ums>[^"&]+)&')
    
-   URL_FMT_WATCH = 'http://www.youtube.com/watch?v={0}&fmt={1}'
+   URL_FMT_WATCH = 'http://www.youtube.com/watch?v={0}&fmt={1}&has_verified=1'
    URL_FMT_GETVIDEO = 'http://www.youtube.com/get_video?video_id={0}&t={1}{2}'
    URL_FMT_GETVIDEOINFO = 'http://youtube.com/get_video_info?video_id={0}'
    
