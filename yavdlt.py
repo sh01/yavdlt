@@ -1084,8 +1084,9 @@ def arg2vidset(s, fallback=True):
    log = logging.getLogger('arg2vidset').log
    res = (
       re.compile('^(?P<vid>[A-Za-z0-9_-]{11})$'),
-      re.compile('^http://www.youtube(?:-nocookie)?\.[^/]+/+watch?.*v=(?P<vid>[A-Za-z0-9_-]{11})($|[^A-Za-z0-9_-])'),
-      re.compile('^http://www.youtube(?:-nocookie)?\.[^/]+/+v/+(?P<vid>[A-Za-z0-9_-]{11})($|[^A-Za-z0-9_-])')
+      re.compile('^http://(?:www.)?youtube(?:-nocookie)?\.[^\./]+\.?/+watch?.*v=(?P<vid>[A-Za-z0-9_-]{11})(?:$|[^A-Za-z0-9_-])'),
+      re.compile('^http://(?:www.)?youtube(?:-nocookie)?\.[^\./]+\.?/+v/+(?P<vid>[A-Za-z0-9_-]{11})(?:$|[^A-Za-z0-9_-])'),
+      re.compile('^http://youtu.be/(?P<vid>[A-Za-z0-9_-]{11})($|[^A-Za-z0-9_-])')
    )
    
    for rx in res:
