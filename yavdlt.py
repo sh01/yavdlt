@@ -544,7 +544,8 @@ class YTVideoRef:
    re_err = re.compile(b'<div[^>]* id="error-box"[^>]*>.*?<div[^>]* class="yt-alert-content"[^>]*>(?P<text>.*?)</div>', re.DOTALL)
    re_err_age = re.compile(b'<div id="verify-age-details">(?P<text>.*?)</div>', re.DOTALL)
    re_fmt_url_map_markup = re.compile(r'\? "(?P<umm>.*?fmt_url_map=.*?>)"')
-   re_fmt_url_map = re.compile('fmt_url_map=(?P<ums>[^"&]+)&')
+   re_fmt_url_map = re.compile('fmt_url_map=(?P<ms>[^"&]+)&')
+   re_fmt_stream_map = re.compile('fmt_stream_map=(?P<ms>[^"&]+)&')
    
    URL_FMT_WATCH = 'http://www.youtube.com/watch?v={0}&fmt={1}&has_verified=1'
    URL_FMT_GETVIDEO = 'http://www.youtube.com/get_video?video_id={0}&t={1}{2}'
@@ -572,6 +573,7 @@ class YTVideoRef:
       self.tok = None
       self._mime_type = None
       self.fmt_url_map = {}
+      self._fmt_stream_map = {}
       self.force_fmt_url_map_use = False
       self.got_video_info = False
       self.title = None
@@ -590,6 +592,18 @@ class YTVideoRef:
       relevant YTVideoRef instance(s) with a callable that implements the
       mapping you desire."""
       return url
+   
+   def _get_stream_urls(self):
+      rv = {}
+      for (key, val) in self._fmt_stream_map.items():
+         val_s = val.split('|')
+         if ((len(val_s) == 3) and (val_s[0].startswith('http://'))):
+            rv[key] = val_s[0]
+         elif ((len(val_s) == 2) and (val_s[1].startswith('rtmpe://'))):
+            rv[key] = val_s[1]
+         else:
+            raise ValueError('Unknown stream url format {0!a}.'.format(val))
+      return rv
    
    def url_get_annots(self):
       return self.mangle_yt_url('http://www.google.com/reviews/y/read2?video_id={0}'.format(self.vid))
@@ -622,7 +636,9 @@ class YTVideoRef:
       self.title = vi['title']
       
       ums = vi['fmt_url_map']
-      self.fmt_url_map_update(ums)
+      self.fmt_map_update(ums, self.fmt_url_map)
+      sms = vi['fmt_stream_map']
+      self.fmt_map_update(sms, self._fmt_stream_map, False)
       
       self.got_video_info = True
    
@@ -665,7 +681,7 @@ class YTVideoRef:
       self.log(20, 'Acquired token {0}.'.format(tok))
       self.tok = tok
       
-      self.fmt_url_map_update_markup(content)
+      self.fmt_maps_update_markup(content)
    
    def _choose_tmp_fn(self, ext=None):
       return os.path.join(self.dlp_tmp, self._choose_fn(ext) + '.tmp')
@@ -703,7 +719,7 @@ class YTVideoRef:
       # Need to determine preferred format first.
       if (self.pick_video() is None):
          # No working formats, forget all this then.
-         return
+         raise YTError('Unable to pick video fmt; bailing out.')
       
       if (self.make_mkv and os.path.exists(self._choose_final_fn())):
          # MKV files are only written once we have retrieved all the data for this video; so if one for this video exists
@@ -932,20 +948,20 @@ class YTVideoRef:
       url = self.URL_FMT_WATCH.format(self.vid, fmt)
       url = self.mangle_yt_url(url)
       content = urllib.request.urlopen(url).read()
-      self.fmt_url_map_update_markup(content)
+      self.fmt_maps_update_markup(content)
    
-   def fmt_url_map_update(self, ums):
+   def fmt_map_update(self, ums, _map, log=True):
       ums_split = ums.split(',')
       
       for umsf in ums_split:
          (fmt_str, url) = umsf.split('|',1)
          fmt = int(fmt_str)
          
-         if not (fmt in self.fmt_url_map):
+         if (log and (not (fmt in self.fmt_url_map))):
             self.log(20, 'Caching direct url for new format {0:d}.'.format(fmt))
-         self.fmt_url_map[fmt] = url
+         _map[fmt] = url
    
-   def fmt_url_map_update_markup(self, markup):
+   def fmt_maps_update_markup(self, markup):
       from urllib.parse import unquote
       if (isinstance(markup, bytes)):
          markup = markup.decode('utf-8','surrogateescape')
@@ -956,13 +972,14 @@ class YTVideoRef:
       umm = m.groupdict()['umm']
       
       umm_unescaped = escape_decode(umm)
-      m2 = self.re_fmt_url_map.search(umm_unescaped)
       
-      if (m2 is None):
-         return
-      ums_raw = m2.groupdict()['ums']
-      ums = unquote(ums_raw)
-      self.fmt_url_map_update(ums)
+      for (re, _map, log) in ((self.re_fmt_url_map, self.fmt_url_map, True), (self.re_fmt_stream_map, self._fmt_stream_map, False)):
+         m2 = re.search(umm_unescaped)
+         if (m2 is None):
+            continue
+         ms_raw = m2.groupdict()['ms']
+         ms = unquote(ms_raw)
+         self.fmt_map_update(ms, _map, log)
    
    def pick_video(self, cache_ok=True):
       from urllib.parse import splittype, splithost
@@ -1343,6 +1360,9 @@ def main():
          ref.fetch_data(dtypemask)
       except YTError:
          log(30, 'Failed to retrieve video {0!a}:'.format(vid), exc_info=True)
+         stream_urls = list(ref._get_stream_urls().values())
+         if ((not ref.fmt_url_map) and stream_urls):
+            log(20, "We did manage to retrieve some stream urls we don't know how to use: {0!a}.".format(stream_urls))
          vids_failed.append(vid)
          continue
    
