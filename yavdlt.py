@@ -1253,6 +1253,7 @@ class Config:
       oa('--list-url-manglers', dest='list_url_manglers', action='store_true', help='Print lists of known URL manglers and exit')
       oa('--url-mangler', '-u', dest='url_mangler', metavar='UMNAME', help='Fetch metadata pages through specified HTTP gateway')
       oa('--mkv', '-m', dest='make_mkv', action='store_true', help='Mux downloaded data (AV+Subs) into MKV file.')
+      oa('--nomkv', dest='make_mkv', action='store_false', help="Don't mux downloaded data (AV+Subs) into MKV file.")
       oa('-q', '--quiet', dest='loglevel', action='store_const', const=30, help='Limit output to errors.')
       
       rv = op.parse_args()
