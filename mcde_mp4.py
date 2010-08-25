@@ -340,13 +340,17 @@ class MovSampleEntry(MovBoxBranch):
       (self.dri,) = struct.unpack(self.bfmt, self.get_body()[:self.bfmt_len])
    
    def get_codec_init_data(self):
-      """Return codec-specific initialization data, H264 variant."""
+      """Return codec-specific initialization data"""
       try:
          esds = self.find_subbox('esds')
       except ValueError:
          return None
       
       return esds.get_dsi()
+   
+   def get_oti(self):
+      """Return ObjectTypeIndication for this stream."""
+      return self.find_subbox('esds').get_oti()
    
    def _format_f(self, fs):
       return '<{0} type: {1} dri: {2}>'.format(type(self).__name__, self.type, self.dri)
@@ -423,6 +427,10 @@ class MovSampleEntryVideo_AVC1(MovSampleEntryVideo):
    def get_codec_init_data(self):
       """Return codec-specific initialization data, H264 variant."""
       return self.find_subbox('avcC').get_body()
+   
+   def get_oti(self):
+      """Return ObjectTypeIndication, H264 variant."""
+      return 0x21
 
 @_mov_sample_entry_type_reg
 class MovSampleEntrySound(MovSampleEntry):
@@ -479,11 +487,11 @@ class _CPData:
    def len_remainder(self):
       return len(self.data)-self.off
 
-class _DecoderConfigDescriptor(collections.namedtuple('_dcdb', 'opi type bufsize br_max br_avg dsi')):
+class _DecoderConfigDescriptor(collections.namedtuple('_dcdb', 'oti type bufsize br_max br_avg dsi')):
    bfmt = '>BLLL'
    @classmethod
    def build_from_bindata(cls, bd):
-      (opi, data2, br_max, br_avg) = bd.unpack(cls.bfmt)
+      (oti, data2, br_max, br_avg) = bd.unpack(cls.bfmt)
       bs = (data2 & 16777215)
       si = (data2 >> 25)
       stype = (si >> 1)
@@ -508,7 +516,7 @@ class _DecoderConfigDescriptor(collections.namedtuple('_dcdb', 'opi type bufsize
       else:
          dsi = None
       
-      return cls(opi, stype, bs, br_max, br_avg, dsi)
+      return cls(oti, stype, bs, br_max, br_avg, dsi)
 
 @_mov_box_type_reg
 class MovBoxCodecPrivate_EsDescriptor(MovFullBox):
@@ -518,6 +526,11 @@ class MovBoxCodecPrivate_EsDescriptor(MovFullBox):
    def get_dsi(self):
       if (self.dcd_data):
          return self.dcd_data[0].dsi
+      return None
+   
+   def get_oti(self):
+      if (self.dcd_data):
+         return self.dcd_data[0].oti
       return None
    
    def _init2(self):
@@ -668,10 +681,24 @@ class MovBoxCompositionTimeToSample(MovBoxSampleTableRepeats):
 @_mov_box_type_reg
 class MovBoxMovie(MovBoxBranch):
    type = FourCC(b'moov')
+   # Data from <http://www.mp4ra.org/object.html>
    CODEC2ID = {
-      FourCC(b'mp4a'): CODEC_ID_AAC,
-      FourCC(b'mp4v'): CODEC_ID_MPEG4_2,
-      FourCC(b'avc1'): CODEC_ID_MPEG4_10
+      0x20: CODEC_ID_MPEG4_2,
+      0x21: CODEC_ID_MPEG4_10,
+      0x60: CODEC_ID_MPEG2_2,
+      0x61: CODEC_ID_MPEG2_2,
+      0x62: CODEC_ID_MPEG2_2,
+      0x63: CODEC_ID_MPEG2_2,
+      0x64: CODEC_ID_MPEG2_2,
+      0x65: CODEC_ID_MPEG2_2,
+      
+      0x40: CODEC_ID_AAC,
+      0x66: CODEC_ID_AAC,
+      0x67: CODEC_ID_AAC,
+      0x68: CODEC_ID_AAC,
+      0x69: CODEC_ID_MPEG2_3,
+      0x6B: CODEC_ID_MP3,
+      0xA5: CODEC_ID_AC3
    }
    
    _HTYPE_SOUN = FourCC(b'soun')
@@ -694,7 +721,7 @@ class MovBoxMovie(MovBoxBranch):
       for track in tracks:
          mdhd = track.get_mdhd()
          se = track.get_sample_entry()
-         mp4_codec = se.type
+         mp4_codec = se.get_oti()
          
          htype = track.find_subbox(b'mdia').find_subbox(b'hdlr').handler_type
          if (htype == self._HTYPE_VIDE):
