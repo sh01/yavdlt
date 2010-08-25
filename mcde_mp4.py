@@ -561,12 +561,29 @@ class MovBoxMediaHeader(MovFullBox):
       
       self.ts_creat = movts2unixtime(ts_creat)
       self.ts_mod = movts2unixtime(ts_mod)
+      self.lc = self._lc_parse(lc_raw)
+   
+   @staticmethod
+   def _lc_parse(lc_raw):
+      """Parse an 16bit MP4 mdhd language code integer to a string."""
+      # Someone must have felt really clever for saving a single friggin' byte per stream in a media container container format
+      # by coming up with this ridiculous and overcomplicated encoding scheme. Ugh. Talk about premature optimization.
+      b = bytearray(3)
+      (r, b[2]) = divmod(lc_raw, 32)
+      (r, b[1]) = divmod(r, 32)
+      (r, b[0]) = divmod(r, 32)
+      if (r):
+         raise ValueError('Top lc bit not zero.')
+      b[0] += 0x60
+      b[1] += 0x60
+      b[2] += 0x60
+      return b.decode('ascii')
    
    def _format_f(self, s):
       dt_creat = datetime.datetime.fromtimestamp(self.ts_creat)
       dt_mod = datetime.datetime.fromtimestamp(self.ts_mod)
-      return '<{0} type: {1} time_scale: {2} ts_creat: {3} ts_mod: {4} dur: {5}>'.format(type(self).__name__, self.type,
-         self.time_scale, dt_creat, dt_mod, self.get_dur())
+      return '<{0} type: {1} time_scale: {2} ts_creat: {3} ts_mod: {4} dur: {5} lc: {6!a}>'.format(type(self).__name__, self.type,
+         self.time_scale, dt_creat, dt_mod, self.get_dur(), self.lc)
    
    def get_dur(self):
       return self.dur/self.time_scale
