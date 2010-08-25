@@ -479,13 +479,14 @@ class _CPData:
    def len_remainder(self):
       return len(self.data)-self.off
 
-class _DecoderConfigDescriptor(collections.namedtuple('_dcdb', 'opi si bufsize br_max br_avg dsi')):
+class _DecoderConfigDescriptor(collections.namedtuple('_dcdb', 'opi type bufsize br_max br_avg dsi')):
    bfmt = '>BLLL'
    @classmethod
    def build_from_bindata(cls, bd):
       (opi, data2, br_max, br_avg) = bd.unpack(cls.bfmt)
       bs = (data2 & 16777215)
-      si = (data2 >> 24)
+      si = (data2 >> 25)
+      stype = (si >> 1)
       
       if (bd.len_remainder()):
          dsi_tag = bd.get_byte()
@@ -507,7 +508,7 @@ class _DecoderConfigDescriptor(collections.namedtuple('_dcdb', 'opi si bufsize b
       else:
          dsi = None
       
-      return cls(opi, si, bs, br_max, br_avg, dsi)
+      return cls(opi, stype, bs, br_max, br_avg, dsi)
 
 @_mov_box_type_reg
 class MovBoxCodecPrivate_EsDescriptor(MovFullBox):
