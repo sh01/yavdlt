@@ -1219,8 +1219,8 @@ def _make_random_uid():
 class MatroskaCodec(str):
    CODEC_ID2MKV = {
       #video
-      CODEC_ID_MPEG1: 'V_MPEG1',
-      CODEC_ID_MPEG2: 'V_MPEG2',
+      CODEC_ID_MPEG1_2: 'V_MPEG1',
+      CODEC_ID_MPEG2_2: 'V_MPEG2',
       CODEC_ID_MPEG4_2: 'V_MPEG4/ISO/ASP',
       CODEC_ID_MPEG4_10: 'V_MPEG4/ISO/AVC',
       CODEC_ID_SNOW: 'V_SNOW',

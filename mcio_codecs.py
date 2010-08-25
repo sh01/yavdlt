@@ -36,8 +36,8 @@ class _CodecID(int):
 def __init():
    codecs = (
       # video codecs
-      'MPEG1',
-      'MPEG2',
+      'MPEG1_2',
+      ('MPEG2_2', 'H262'),
       ('MPEG4_2', 'DIVX'),
       ('H264', 'AVC', 'MPEG4_10'),
       'SNOW',
@@ -50,13 +50,14 @@ def __init():
       'VP8',
       
       # audio codecs
-      'AAC',
+      ('AAC', 'MPEG2_7'), # Also a significant subset of MPEG4_3 ... but apparently not all of it?
       'AC3',
       'DTS',
       'FLAC',
-      ('MP1', 'MPEG1_1'),
-      ('MP2', 'MPEG1_2'),
-      ('MP3', 'MPEG1_3'),
+      ('MP1', 'MPEG1_3_1'),
+      ('MP2', 'MPEG1_3_2'),
+      ('MP3', 'MPEG1_3_3'),
+      'MPEG2_3',
       'SPEEX',
       'VORBIS',
       
