@@ -449,9 +449,6 @@ class MovSampleEntrySound(MovSampleEntry):
          self.dri, self.channel_count, self.sample_size, self.sample_rate)
 
 @_mov_box_type_reg
-class MovSampleEntrySound_AAC(MovSampleEntrySound):
-   type = FourCC('mp4a')
-
 class MovSampleEntryMpeg(MovSampleEntry):
    type = FourCC('mp4s')
    def _init2(self):
