@@ -556,6 +556,9 @@ class MovBoxCodecPrivate_EsDescriptor(MovFullBox):
       
       if (bd.len_remainder()):
          raise ValueError('Failed to parse ESDS body data {0} correctly: length {{over,under}}run.'.format(bd))
+   
+   def _format_f(self, fs):
+      return '<{0} dcd: {1}>'.format(type(self).__name__, self.dcd_data)
       
 
 @_mov_box_type_reg
