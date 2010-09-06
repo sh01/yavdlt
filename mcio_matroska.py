@@ -1282,7 +1282,8 @@ class BitmapInfoHeader:
    WRAP_CODEC_ID = CODEC_ID_MKV_MSC_VFW
    
    ID2CODEC = {
-      CODEC_ID_FLV1: FourCC(b'FLV1')
+      CODEC_ID_FLV1: FourCC(b'FLV1'),
+      CODEC_ID_VP6: FourCC(b'FLV4')
    }
    
    def __init__(self, codec_id, width, height):

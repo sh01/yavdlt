@@ -264,6 +264,15 @@ class FLVVideoData(FLVTag):
          (ct_off,) = struct.unpack('>L', hdr2_buf)
          body_size -= 4
       else:
+         if (codec_id == 4):
+            hdr2_data = f.read(1)
+            body_size -= 1
+         elif (codec_id == 5):
+            hdr2_buf = struct.unpack('>B', f.read(1))
+            ota = hdr2_buf & 16777215
+            body_size -= 1
+            body_size -= ota
+            
          avc_pt = None
          ct_off = None
       
@@ -702,9 +711,9 @@ class FLVReader:
    
    CODEC2ID_V = {
       2: CODEC_ID_FLV1,
-      3: CODEC_ID_FLASHSV,
+      #3: CODEC_ID_FLASHSV,
       4: CODEC_ID_VP6,
-      5: CODEC_ID_VP6A,
+      #5: CODEC_ID_VP6A,
       7: CODEC_ID_MPEG4_10
    }
    
