@@ -17,6 +17,7 @@
 
 # Media container I/O: Matroska format
 
+from collections import deque
 from copy import deepcopy
 import datetime
 import math
@@ -37,29 +38,31 @@ class EBMLError(MatroskaBaseError):
 class MatroskaError(MatroskaBaseError):
    pass
 
-def _calc_vint_size(i):
-   payload_len = (i+1).bit_length()
+def _calc_vint_size(i, signed):
+   payload_len = (i+1-signed).bit_length() + signed
    rv = 1
    while ((rv*8 - rv) < payload_len):
       rv += 1
    return rv
 
 class EBMLVInt(int):
-   lt_sbit = (None,) + tuple(int(math.log(i,2)) for i in range(1,2**8-1))
+   lt_sbit = (None,) + tuple(int(math.log(i,2)) for i in range(1,2**8))
    lt_prefix_reserved = tuple(not bool(math.log(i+1,2) % 1) for i in range(0,2**8))
    SIGNED = False
    
    def __init__(self, x):
-      self.size = _calc_vint_size(x)
+      self.size = _calc_vint_size(x, self.SIGNED)
    
    def get_bindata(self):
       """Return binary string representing this VInt."""
       rv = bytearray(self.size)
-      prefix_bytes = (self.size-1) // 8
-      prefix_bits = (self.size-1) % 8
+      (prefix_bytes, prefix_bits) = divmod(self.size-1, 8)
       
+      databits = (8*len(rv) - 8*prefix_bytes - prefix_bits - 1)
       mult = 1 << (8*(len(rv)-prefix_bytes-1))
       val = int(self)
+      if (self.SIGNED):
+         val += 2**(databits-1)-1
       
       for i in range(prefix_bytes, len(rv)):
          rv[i] = val // mult
@@ -685,7 +688,7 @@ class MatroskaElementTracks(MatroskaElementMaster):
    type = EBMLVInt(106212971)
    def sort_tracks(self):
       def _key(e):
-         return e.get_sub_by_cls(MatroskaElementTrackType).val
+         return e.get_track_type()
       
       self.sub.sort(key=_key)
       rv = {}
@@ -703,6 +706,8 @@ class MatroskaElementTracks(MatroskaElementMaster):
 @_mkv_type_reg
 class MatroskaElementTrackEntry(MatroskaElementMaster):
    type = EBMLVInt(46)
+   def get_track_type(self):
+      return self.get_sub_by_cls(MatroskaElementTrackType).val
 
 @_mkv_type_reg
 class MatroskaElementTrackTranslate(MatroskaElementMaster):
@@ -986,10 +991,23 @@ class MatroskaElementSimpleBlock(MatroskaElementBlockBase):
 class MatroskaElementCodecPrivate(MatroskaElementBinary):
    type = EBMLVInt(9122)
 
+_MATROSKA_LT_XIPH = 1
+_MATROSKA_LT_EBML = 2
+_MATROSKA_LT_FIXED = 4
+_MATROSKA_LT_ANY = _MATROSKA_LT_XIPH | _MATROSKA_LT_EBML | _MATROSKA_LT_FIXED
+
 class MatroskaElementBlock_r(MatroskaElement):
    _bfmt_subhdr = '>hB'
    _bfmt_subhdr_len = struct.calcsize(_bfmt_subhdr)
-   def __init__(self, etype:int, tracknum:int, timecode:int, flags:int, keyframe:bool, data_r):
+   _LT_MAP = {
+      None: 0,
+      _MATROSKA_LT_XIPH: 1,
+      _MATROSKA_LT_EBML: 3,
+      _MATROSKA_LT_FIXED: 2
+   }
+   _LT_MAP_INV = dict((v,k) for (k,v) in _LT_MAP.items())
+   
+   def __init__(self, etype:int, tracknum:int, timecode:int, flags:int, keyframe:bool, frame_data, lace_data=None):
       super().__init__()
       self.type = etype
       
@@ -997,7 +1015,8 @@ class MatroskaElementBlock_r(MatroskaElement):
       self.tracknum = MatroskaVInt(tracknum)
       self.timecode = timecode
       self.flags = flags
-      self.data_r = data_r
+      self.frame_data = frame_data
+      self.lace_data = lace_data
       
    @classmethod
    def new(cls, *args, **kwargs):
@@ -1010,17 +1029,45 @@ class MatroskaElementBlock_r(MatroskaElement):
    def new_simple(cls, tracknum:int, timecode:int, flags:int, keyframe, *args, **kwargs):
       flags |= (keyframe << 7)
       return cls(MatroskaElementSimpleBlock.type, tracknum, timecode, flags, keyframe, *args, **kwargs)
-      
+   
    def get_size(self):
-      bd_size = self._bfmt_subhdr_len + self.tracknum.size + self.data_r.get_size()
+      bd_size = self._bfmt_subhdr_len + self.tracknum.size + self._get_lacehdr_size() + self._get_data_size()
       return (self.type.size + MatroskaVInt(bd_size).size + bd_size)
-
+   
+   def _get_data_size(self):
+      return sum(d.get_size() for d in self.frame_data)
+   
+   def _get_lacehdr_size(self):
+      if (self.lace_data is None):
+         return 0
+      return self.lace_data.get_size() + 1
+   
    def write_to_file(self, c):
-      bd = self.tracknum.get_bindata() + struct.pack(self._bfmt_subhdr, self.timecode, self.flags) + \
-         self.data_r.get_data()
-      hl = self._write_header(c, MatroskaVInt(len(bd)))
-      bl = c.f.write(bd)
-      if (bl != len(bd)):
+      ld = self.lace_data
+      
+      ls = self._get_lacehdr_size()
+      if (ld is None):
+         if (len(self.frame_data) > 1):
+            raise MatroskaError("Can't encode {0} frames without lacing.".format(len(self.frame_data)))
+         lh = b''
+      else:
+         lh = struct.pack('>B', len(self.frame_data)-1)
+         ls -= 1
+      
+      flags = self.flags & ~6
+      if not (ld is None):
+         flags |= self._LT_MAP[ld.LT] << 1
+      shdr = b''.join((self.tracknum.get_bindata(), struct.pack(self._bfmt_subhdr, self.timecode, flags), lh))
+      bd_sz = len(shdr) + ls + self._get_data_size()
+      
+      hl = self._write_header(c, MatroskaVInt(bd_sz))
+      bl = c.f.write(shdr)
+      if not (ld is None):
+         bl += ld.write_to_file(c)
+      for data_r in self.frame_data:
+         bl += c.f.write(data_r.get_data())
+      
+      if (bl != bd_sz):
          raise IOError()
       return (hl + bl)
 
@@ -1056,6 +1103,10 @@ class EBMLElementDocTypeReadVersion(MatroskaElementUInt):
 @_mkv_type_reg
 class MatroskaElementPrevSize(MatroskaElementUInt):
    type = EBMLVInt(43)
+
+@_mkv_type_reg
+class MatroskaElementFlagLacing(MatroskaElementUInt):
+   type = EBMLVInt(28)
 
 @_mkv_type_reg
 class MatroskaElementCueClusterPosition(MatroskaElementUInt):
@@ -1266,12 +1317,12 @@ class MatroskaFrame:
    def build_blockthing(self, tracknum, c_off):
       keyframe = self.is_keyframe()
       if (self.dur is None):
-         return MatroskaElementBlock_r.new_simple(tracknum, self.tc-c_off, self.flags, keyframe, self.data_r)
+         return MatroskaElementBlock_r.new_simple(tracknum, self.tc-c_off, self.flags, keyframe, [self.data_r])
    
       se = [MatroskaElementReferenceBlock.new(tc) for tc in self.tc_dependencies]
       if not (self.dur is None):
          se.append(MatroskaElementBlockDuration.new(self.dur))
-      se.append(MatroskaElementBlock_r.new(tracknum, self.tc-c_off, self.flags, keyframe, self.data_r))
+      se.append(MatroskaElementBlock_r.new(tracknum, self.tc-c_off, self.flags, keyframe, [self.data_r]))
       return MatroskaElementBlockGroup.new(se)
 
 
@@ -1302,7 +1353,119 @@ class BitmapInfoHeader:
    def get_bindata(self):
       return struct.pack(self.BFMT, self.BFMT_LEN, self.width, self.height, self.planes, self.colour_depth,
          struct.pack('>L', self.codec), 0, self.x_ppm, self.y_ppm, 0, 0)
+
+class _LaceLengthSeq(deque):
+   pass
+
+class _LaceLengthSeqEBML(_LaceLengthSeq):
+   LT = _MATROSKA_LT_EBML
+   @classmethod
+   def build_from_frames(cls, frames):
+      sz_prev = frames[0].data_r.get_size()
+      rv = cls((MatroskaVInt(sz_prev),))
+      for frame in frames[1:-1]:
+         sz = frame.data_r.get_size()
+         rv.append(MatroskaSVInt(sz - sz_prev))
+         sz_prev = sz
+      return rv
+   
+   def get_size(self):
+      return sum(i.size for i in self)
+   
+   def write_to_file(self, c):
+      rv = 0
+      for e in self:
+         rv += e.write_to_file(c)
+      return rv
+
+class _LaceLengthSeqXiph(_LaceLengthSeq):
+   LT = _MATROSKA_LT_XIPH
+   @classmethod
+   def build_from_frames(cls, frames):
+      rv = cls()
+      for frame in frames[:-1]:
+         (pl, mod) = divmod(frame.data_r.get_size(),255)
+         rv.append(b'\xFF'*pl + struct.pack('>B', mod))
+   
+      return rv
+   
+   def get_size(self):
+      return sum(len(e) for e in self)
+   
+   def write_to_file(self, c):
+      rv = 0
+      for e in self:
+         rv += c.f.write(e)
+      return rv
+
+
+class _FrameQueue:
+   def __init__(self, frames, lace_mask):
+      self._f = frames
+      self._i = 0
+      self._lm = lace_mask
+      
+      if (frames):
+         if (self._lm):
+            dur = frames[0].dur
+            for frame in frames[1:]:
+               if (frame.dur != dur):
+                  self._lm = False
+                  break
+       
+         if (self._lm & _MATROSKA_LT_FIXED):
+            sz = frames[0].dur
+            for frame in frames[1:]:
+               if (frame.data_r.get_size() != sz):   
+                  self._lm &= ~_MATROSKA_LT_FIXED
+                  break
+   
+   def __bool__(self):
+      return (self._i < len(self._f))
+   
+   def get_frame(self):
+      return self._f[self._i]
+   
+   def _pop_frame(self):
+      rv = self._f[self._i]
+      self._i += 1
+      return rv
+      
+   def make_blockthing(self, lace_limit, *args, **kwargs):
+      ll = min(lace_limit, 256)
+      frame0 = self._pop_frame()
+      kf = frame0.is_keyframe()
+      bt = frame0.build_blockthing(*args, **kwargs)
+      fl = [frame0]
+      if (self._lm):
+         while (self and (len(fl) < ll)):
+            frame = self._pop_frame()
+            if (frame.is_keyframe() != kf):
+               self._i -= 1
+               break
+            fl.append(frame)
+      
+      if ((not self._lm) or (len(fl) <= 1)):
+         return bt
+      
+      if (self._lm & _MATROSKA_LT_FIXED):
+         lt = _MATROSKA_LT_FIXED
+      else:
+         lls = None
+         for lls_cls in (_LaceLengthSeqXiph, _LaceLengthSeqEBML):
+            if not (lls_cls.LT & self._lm):
+               continue
+            lls_n = lls_cls.build_from_frames(fl)
+            if ((lls is None) or (lls_n.get_size() < lls.get_size())):
+               lls = lls_n
          
+         if (lls is None):
+            raise MatroskaError("Lacing type choosing failed. :( This shouldn't happen, and indicates a bug in yavdlt.")
+
+      bt.lace_data = lls
+      bt.frame_data = [frame.data_r for frame in fl]
+      return bt
+
 
 class MatroskaBuilder:
    settings_map = {
@@ -1323,18 +1486,26 @@ class MatroskaBuilder:
       TRACKTYPE_VIDEO: BitmapInfoHeader
    }
    
-   # Be bug-compatible with mplayer r1.0~rc3+svn20100502-4.4.4, at the cost of allocating the first cluster suboptimally.
+   # Be bug compatible with mplayer r1.0~rc3+svn20100502-4.4.4, at the cost of allocating the first cluster suboptimally.
    bc_old_mplayer = True
+   # Be bug compatible with libavformat from ffmpeg r25042 (current as-of-writing), at the cost of losing all ability to
+   # perform interlacing on non-audio streams.
+   bc_lavf_lacing = True
    # Work around some VLC bugs. Note that VLC is sufficiently buggy that working around *all* of them is likely to remain
    # impractical for the forseeable future. For instance, there are currently no plans to implement a workaround for
    # <https://trac.videolan.org/vlc/ticket/2702>.
    bc_vlc = True
+   # How many frames at most to put in the same block through interlacing. 256 is the theoretical maximum, but media player
+   # support for that at the time of writing is ... extremely lacking. 255 seems to work ok for the most part - but
+   # mplayer/lavf might start to complain about playback performance. 32 appears to work well, and the additional benefits
+   # from going up to 255 aren't sufficient to bother at this time.
+   frames_per_block_limit = 32
    
    MS_CM_NEVER = 0
    MS_CM_AUTO = 1
    MS_CM_FORCE = 2
    
-   def __init__(self, tcs, dur, ts=None):
+   def __init__(self, tcs, dur, ts=None, lace_mask=_MATROSKA_LT_ANY):
       self.ebml_hdr = EBMLHeader.new([
          EBMLElementDocType.new('matroska'),
          EBMLElementDocTypeVersion.new(2),
@@ -1358,6 +1529,7 @@ class MatroskaBuilder:
       self.tcs = tcs
       self.tracks = MatroskaElementTracks.new([])
       self.frames = {}
+      self.lace_mask = lace_mask
    
    def set_writingapp(self, write_app):
       self.mkv_info.set_sub(MatroskaElementWritingApp.new(write_app))
@@ -1382,10 +1554,9 @@ class MatroskaBuilder:
       return frame
    
    def _build_clusters(self):
-      from collections import deque
       frames = {}
       for (key, val) in self.frames.items():
-         frames[key] = deque(val)
+         frames[key] = _FrameQueue(val, self.lace_mask)
       
       clusters = deque()
       cues = {}
@@ -1431,19 +1602,27 @@ class MatroskaBuilder:
             add_cluster(-self.TOFF_CLUSTER+frame_tc_min)
       
       while (frames):
-         (tn, tframes) = min(frames.items(), key=lambda x:x[1][0].tc)
-         frame = tframes.popleft()
-         tc = frame.tc
+         (tn, tframes) = min(frames.items(), key=lambda x:x[1].get_frame().tc)
+         track = self.tracks.get_track(tn)
+         frame0 = tframes.get_frame()
+         tc = frame0.tc
+         
+         if ((tc > c_max) or (tc < c_min)):
+            add_cluster(tc)
+         
+         if (track._lacing):
+            bt = tframes.make_blockthing(self.frames_per_block_limit, tn, c._tc)
+         else:
+            bt = tframes.make_blockthing(1, tn, c._tc)
          
          if (not tframes):
             del(frames[tn])
          
-         if ((tc > c_max) or (tc < c_min)):
-            add_cluster(tc)
-         c.sub.append(frame.build_blockthing(tn, c._tc))
+         #c.sub.append(frame.build_blockthing(tn, c._tc))
+         c.sub.append(bt)
          c.__blockcount += 1
          
-         if (frame.is_keyframe() and self.tracks.get_track(tn)._make_cues):
+         if (frame0.is_keyframe() and track._make_cues):
             # Make cue entry.
             try:
                cp = cues[tc]
@@ -1507,6 +1686,13 @@ class MatroskaBuilder:
       tcs = round(10**9/sdiv/elmult)
       return (tcs, elmult, get_error(elmult))
 
+   def _track_lacing(self, ttype):
+      if (self.lace_mask == 0):
+         return False
+      if (self.bc_lavf_lacing):
+         return (ttype == TRACKTYPE_AUDIO)
+      return True
+
    def _build_track(self, ttype, codec, cid, default_dur, make_cues, ms_cm, track_name, track_lc, *args, **kwargs):
       """Build MatroskaElementTrackEntry structure and add to tracks."""
       track_num = len(self.tracks.sub) + 1
@@ -1540,10 +1726,13 @@ class MatroskaBuilder:
          
          mkv_codec = MatroskaCodec.CODEC_ID2MKV[ms_cm_cls.WRAP_CODEC_ID]
       
+      lacing = self._track_lacing(ttype)
+      
       sub_els = [
          MatroskaElementTrackNumber.new(track_num),
          MatroskaElementTrackUID.new(track_num),
          MatroskaElementTrackType.new(ttype),
+         MatroskaElementFlagLacing.new(lacing),
          MatroskaElementCodec.new(mkv_codec)
       ]
       if not (cid is None):
@@ -1564,6 +1753,7 @@ class MatroskaBuilder:
       
       te = MatroskaElementTrackEntry.new(sub_els)
       te._make_cues = make_cues
+      te._lacing = lacing
       self.tracks.sub.append(te)
       return (track_num, te)
    
@@ -1586,6 +1776,10 @@ class MatroskaBuilder:
       
       te.set_sub(MatroskaElementTrackNumber.new(track_num))
       te._make_cues = make_cues
+
+      lacing = self._track_lacing(te.get_track_type())
+      te._lacing = lacing
+      te.set_sub(MatroskaElementFlagLacing.new(lacing))
       
       self.tracks.sub.append(te)
       self._add_track_data(track_num, data)
@@ -1676,11 +1870,15 @@ def _dump_elements(seq, depth=0):
 def _main():
    """Run module selftests."""
    from sys import argv
-   for bval in (b'\x1A\x45\xDF\xA3', b'\x42\x86', b'\x1b\x53\x86\x67', b'\x80'):
-      (ival,ival_sz) = MatroskaVInt.build_from_bindata(bval)
-      bval2 = ival.get_bindata()
-      if (bval != bval2):
-         raise Exception('Failed VInt testcase for {0} ({1},{2}).'.format(bval, ival, bval2))
+   for bval in (b'\x1A\x45\xDF\xA3', b'\x42\x86', b'_\xbf', b'\x1b\x53\x86\x67', b'\x80'):
+      for VI in (MatroskaVInt, MatroskaSVInt):
+         try:
+            (ival,ival_sz) = VI.build_from_bindata(bval)
+            bval2 = ival.get_bindata()
+         except Exception as exc:
+            raise Exception('Failed {0} testcase for {1} ({2},{3}).'.format(VI.__name__, bval, ival, bval2)) from exc
+         if (bval != bval2):
+            raise Exception('Failed {0} testcase for {1} ({2},{3}).'.format(VI.__name__, bval, ival, bval2))
    
    fn = argv[1]
    f = open(fn, 'rb')
