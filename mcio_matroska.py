@@ -312,6 +312,8 @@ class MatroskaElementBaseNum(MatroskaElement):
          _val = self.val
       
       bd_len = self._get_body_size()
+      if (bd_len > 8):
+         raise MatroskaError("Can't encode int value {0}; would require {1} (> 8) data bytes.".format(self.val, bd_len))
       body_data = struct.pack(self._get_bfmt(bd_len), _val)
       rv = self._write_header(c, bd_len)
       if (bd_len):
@@ -363,8 +365,7 @@ class MatroskaElementUInt(MatroskaElementBaseNum):
       super().__init__(val, *args, **kwargs)
    
    def _get_body_size(self):
-      # Mplayer r1.0~rc3 seems to violently dislike the 0-byte case for some reason. Hack around it here to make it happy.
-      # Shame about the wasted space, though.
+      # While EBML allows for 0-byte ints, matroska sets a minimum length of 1 byte for ... some reason.
       return math.ceil(self.val.bit_length()/8) or 1
 
 class MatroskaElementSInt(MatroskaElementBaseNum):
