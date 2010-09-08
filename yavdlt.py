@@ -540,7 +540,6 @@ class YTimedTextList:
 
 
 class YTVideoRef:
-   re_tok = re.compile(b'&t=(?P<field_t>[^"&]+)&')
    re_title = re.compile(b'<link rel="alternate" +type="application/json\+oembed" +href="[^"]*" +title="(?P<text>.*?)" */>')
    re_err = re.compile(b'<div[^>]* id="error-box"[^>]*>.*?<div[^>]* class="yt-alert-content"[^>]*>(?P<text>.*?)</div>', re.DOTALL)
    re_err_age = re.compile(b'<div id="verify-age-details">(?P<text>.*?)</div>', re.DOTALL)
@@ -569,8 +568,8 @@ class YTVideoRef:
    }
 
    def __init__(self, vid, format_pref_list, dl_path_tmp, dl_path_final, make_mkv):
+      self._tried_md_fetch = False
       self.vid = vid
-      self.tok = None
       self._mime_type = None
       self.fmt_url_map = {}
       self._fmt_stream_map = {}
@@ -601,6 +600,9 @@ class YTVideoRef:
       mapping you desire."""
       return url
    
+   def _got_video_urls(self):
+      return bool(self.fpl)
+   
    def _get_stream_urls(self):
       rv = {}
       for (key, val) in self._fmt_stream_map.items():
@@ -616,15 +618,16 @@ class YTVideoRef:
    def url_get_annots(self):
       return 'http://www.google.com/reviews/y/read2?video_id={0}'.format(self.vid)
    
-   def get_token_blocking(self):
+   def get_metadata_blocking(self):
       self.log(20, 'Acquiring YT metadata.')
+      self._tried_md_fetch = True
       try:
-         self.get_token_getvideoinfo()
+         self._get_metadata_getvideoinfo()
       except YTError:
          self.log(20, 'Video info retrieval failed; falling back to retrieval of metadata from watch page.')
-         self.get_token_watch()
+         self._get_metadata_watch()
    
-   def get_token_getvideoinfo(self):
+   def _get_metadata_getvideoinfo(self):
       from urllib.parse import splitvalue, unquote, unquote_plus
       
       url = self.URL_FMT_GETVIDEOINFO.format(self.vid)
@@ -639,7 +642,6 @@ class YTVideoRef:
          self.log(20, 'YT Refuses to deliver video info: {0!a}'.format(vi))
          raise YTError('YT Refuses to deliver video info: {0!a}'.format(vi))
       
-      self.tok = vi['token']
       self.title = vi['title']
       
       ums = vi['fmt_url_map']
@@ -649,23 +651,22 @@ class YTVideoRef:
       
       self.got_video_info = True
    
-   def get_token_watch(self):
+   def _get_metadata_watch(self):
       fmt = self.fpl[0]
       
       if (fmt is FMT_DEFAULT):
          fmt = ''
       
       url = self.URL_FMT_WATCH.format(self.vid, fmt)
-      
       content = self.urlopen(url).read()
       
-      m = self.re_tok.search(content)
-      if (m is None):
+      fmt_url_count = self.fmt_maps_update_markup(content)
+      if (fmt_url_count == 0):
          m_err = self.re_err.search(content)
          if (m_err is None):
             m_err = self.re_err_age.search(content)
             if (m_err is None):
-               raise YTError("YT markup failed to match expectations; can't extract video token.")
+               raise YTError("YT markup failed to match expectations; couldn't extract video urls.")
             error_cls = YTLoginRequired
          else:
             error_cls = YTError
@@ -673,9 +674,7 @@ class YTVideoRef:
          err_text = m_err.groupdict()['text'].strip().decode('utf-8')
          err_text = err_text.replace('<br/>', '')
          err_text = xml_unescape(err_text)
-         raise error_cls('YT refuses to deliver token: {0!a}.'.format(err_text))
-        
-      tok = m.groupdict()['field_t']
+         raise error_cls('YT refuses to deliver video urls: {0!a}.'.format(err_text))
       
       m = self.re_title.search(content)
       if (m is None):
@@ -683,11 +682,7 @@ class YTVideoRef:
          self.title = '--untitled--'
       else:
          self.title = m.groupdict()['text'].decode('utf-8')
-
-      self.log(20, 'Acquired token {0}.'.format(tok))
-      self.tok = tok
-      
-      self.fmt_maps_update_markup(content)
+         self.log(20, 'Acquired video title {0!a}.'.format(self.title))
    
    def _choose_tmp_fn(self, ext=None):
       return os.path.join(self.dlp_tmp, self._choose_fn(ext) + '.tmp')
@@ -723,7 +718,10 @@ class YTVideoRef:
    
    def fetch_data(self, dtm):
       # Need to determine preferred format first.
-      if (self.pick_video() is None):
+      if (not self._tried_md_fetch):
+         self.get_metadata_blocking()
+      
+      if (self._pick_video() is None):
          # No working formats, forget all this then.
          raise YTError('Unable to pick video fmt; bailing out.')
       
@@ -812,10 +810,10 @@ class YTVideoRef:
       from select import select
       from os import O_NONBLOCK
       
-      if (self.tok is None):
-         self.get_token_blocking()
+      if (not self._tried_md_fetch):
+         self.get_metadata_blocking()
       
-      url = self.pick_video()
+      url = self._pick_video()
       if (url is None):
          raise YTError('Unable to pick video fmt; bailing out.')
       
@@ -957,6 +955,7 @@ class YTVideoRef:
    def fmt_map_update(self, ums, _map, log=True):
       ums_split = ums.split(',')
       
+      rv = 0
       for umsf in ums_split:
          (fmt_str, url) = umsf.split('|',1)
          fmt = int(fmt_str)
@@ -964,6 +963,8 @@ class YTVideoRef:
          if (log and (not (fmt in self.fmt_url_map))):
             self.log(20, 'Caching direct url for new format {0:d}.'.format(fmt))
             _map[fmt] = url
+         rv += 1
+      return rv
    
    def fmt_maps_update_markup(self, markup):
       from urllib.parse import unquote
@@ -972,20 +973,22 @@ class YTVideoRef:
       
       m = self.re_fmt_url_map_markup.search(markup)
       if (m is None):
-        return
+        return 0
       umm = m.groupdict()['umm']
       
       umm_unescaped = escape_decode(umm)
       
+      rv = 0
       for (re, _map, log) in ((self.re_fmt_url_map, self.fmt_url_map, True), (self.re_fmt_stream_map, self._fmt_stream_map, False)):
          m2 = re.search(umm_unescaped)
          if (m2 is None):
             continue
          ms_raw = m2.groupdict()['ms']
          ms = unquote(ms_raw)
-         self.fmt_map_update(ms, _map, log)
+         rv += self.fmt_map_update(ms, _map, log)
+      return rv
    
-   def pick_video(self, cache_ok=True):
+   def _pick_video(self, cache_ok=True):
       from urllib.parse import splittype, splithost
       
       if (cache_ok and self._content_direct_url):
@@ -1355,7 +1358,6 @@ def main():
          ref.force_fmt_url_map_use = True
       
       try:
-         ref.get_token_blocking()
          ref.fetch_data(dtypemask)
       except YTError:
          log(30, 'Failed to retrieve video {0!a}:'.format(vid), exc_info=True)
