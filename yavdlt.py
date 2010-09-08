@@ -549,7 +549,6 @@ class YTVideoRef:
    re_fmt_stream_map = re.compile('fmt_stream_map=(?P<ms>[^"&]+)&')
    
    URL_FMT_WATCH = 'http://www.youtube.com/watch?v={0}&fmt={1}&has_verified=1'
-   URL_FMT_GETVIDEO = 'http://www.youtube.com/get_video?video_id={0}&t={1}{2}'
    URL_FMT_GETVIDEOINFO = 'http://youtube.com/get_video_info?video_id={0}'
    
    logger = logging.getLogger('YTVideoRef')
@@ -575,7 +574,6 @@ class YTVideoRef:
       self._mime_type = None
       self.fmt_url_map = {}
       self._fmt_stream_map = {}
-      self.force_fmt_url_map_use = False
       self.got_video_info = False
       self.title = None
       self.fpl = format_pref_list
@@ -965,7 +963,7 @@ class YTVideoRef:
          
          if (log and (not (fmt in self.fmt_url_map))):
             self.log(20, 'Caching direct url for new format {0:d}.'.format(fmt))
-         _map[fmt] = url
+            _map[fmt] = url
    
    def fmt_maps_update_markup(self, markup):
       from urllib.parse import unquote
@@ -994,7 +992,20 @@ class YTVideoRef:
          return self._content_direct_url
       
       for fmt in self.fpl:
-         url = self.get_video_url(fmt)
+         if (fmt == FMT_DEFAULT):
+            continue
+         
+         if not (fmt in self.fmt_url_map):
+            # TODO: We used to have to do this to get definite information about presence or absence of formats, but
+            # superficial current tests suggest that yt format lists might always be complete now. Do some more research and
+            # drop this if possible.
+            self.fmt_url_map_fetch_update(fmt)
+         try:
+            url = self.fmt_url_map[fmt]
+         except KeyError:
+            self.log(20, 'No url for fmt {0} available.'.format(fmt))
+            continue
+         
          rc = 301
          
          while (301 <= rc <= 303):
@@ -1029,25 +1040,6 @@ class YTVideoRef:
       else:
          self.log(38, 'None of the attempted formats worked out.')
          return None
-   
-   def get_video_url(self, fmt):
-      if (self.force_fmt_url_map_use and (not (fmt in self.fmt_url_map))):
-         self.fmt_url_map_fetch_update(fmt)
-      
-      if (fmt in self.fmt_url_map):
-         self.log(20, 'Using cached direct video url.')
-         return self.fmt_url_map[fmt]
-      
-      if (self.tok is None):
-         raise ValueError('Need to get token first.')
-      
-      if (fmt is FMT_DEFAULT):
-         fmtstr = ''
-      else:
-         fmtstr = '&fmt={0:d}'.format(fmt)
-      
-      rv = self.URL_FMT_GETVIDEO.format(self.vid, self.tok, fmtstr)
-      return rv
 
 
 class YTPlayListRef:
