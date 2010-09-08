@@ -544,10 +544,11 @@ class YTVideoRef:
    re_err = re.compile(b'<div[^>]* id="error-box"[^>]*>.*?<div[^>]* class="yt-alert-content"[^>]*>(?P<text>.*?)</div>', re.DOTALL)
    re_err_age = re.compile(b'<div id="verify-age-details">(?P<text>.*?)</div>', re.DOTALL)
    re_fmt_url_map_markup = re.compile(r'\? "(?P<umm>.*?fmt_url_map=.*?>)"')
+   re_fmt_url_html5 = re.compile('videoPlayer.setAvailableFormat\("(?P<url>[^"]+)", "(?P<mime_type>video/[^"/ \t;]*);[^"]*", "[^"]*", "(?P<fmt>[0-9]+)"\);')
    re_fmt_url_map = re.compile('fmt_url_map=(?P<ms>[^"&]+)&')
    re_fmt_stream_map = re.compile('fmt_stream_map=(?P<ms>[^"&]+)&')
    
-   URL_FMT_WATCH = 'http://www.youtube.com/watch?v={0}&fmt={1}&has_verified=1'
+   URL_FMT_WATCH = 'http://www.youtube.com/watch?v={0}&has_verified=1'
    URL_FMT_GETVIDEOINFO = 'http://youtube.com/get_video_info?video_id={0}'
    
    logger = logging.getLogger('YTVideoRef')
@@ -567,7 +568,7 @@ class YTVideoRef:
       'video/webm': 'mcio_matroska'
    }
 
-   def __init__(self, vid, format_pref_list, dl_path_tmp, dl_path_final, make_mkv):
+   def __init__(self, vid, format_pref_list, dl_path_tmp, dl_path_final, make_mkv, try_html5=False):
       self._tried_md_fetch = False
       self.vid = vid
       self._mime_type = None
@@ -582,12 +583,25 @@ class YTVideoRef:
       self._fmt = None
       self.make_mkv = make_mkv
       self._cookiejar = http.cookiejar.CookieJar()
+      self._try_html5 = try_html5
       self._url_opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookiejar))
    
-   def urlopen(self, url, *args, **kwargs):
+   @staticmethod
+   def _make_html5_optin_cookie():
+      from http.cookiejar import Cookie
+      return Cookie(version=0, name='PREF', value='f2=40000000', port=None, port_specified=False, domain='.youtube.com',
+         domain_specified=True, domain_initial_dot=True, path='/', path_specified=True, secure=False, expires=None,
+         discard=True, comment=None, comment_url=None, rest={}, rfc2109=False)
+   
+   def urlopen(self, url, *args, html5=False, **kwargs):
       """Open specified url, performing mangling if necessary, and return urllib response object."""
       url = self.mangle_yt_url(url)
       req = urllib.request.Request(url, *args, **kwargs)
+      if (html5):
+         cj = http.cookiejar.CookieJar()
+         cj.set_cookie(self._make_html5_optin_cookie())
+         cj.add_cookie_header(req)
+         
       rv = self._url_opener.open(req)
       return rv
    
@@ -625,7 +639,10 @@ class YTVideoRef:
          self._get_metadata_getvideoinfo()
       except YTError:
          self.log(20, 'Video info retrieval failed; falling back to retrieval of metadata from watch page.')
-         self._get_metadata_watch()
+         self._get_metadata_watch(html5=False)
+      
+      if (self._try_html5):
+         self._get_metadata_watch(html5=True)
    
    def _get_metadata_getvideoinfo(self):
       from urllib.parse import splitvalue, unquote, unquote_plus
@@ -651,14 +668,9 @@ class YTVideoRef:
       
       self.got_video_info = True
    
-   def _get_metadata_watch(self):
-      fmt = self.fpl[0]
-      
-      if (fmt is FMT_DEFAULT):
-         fmt = ''
-      
-      url = self.URL_FMT_WATCH.format(self.vid, fmt)
-      content = self.urlopen(url).read()
+   def _get_metadata_watch(self, html5):
+      url = self.URL_FMT_WATCH.format(self.vid)
+      content = self.urlopen(url, html5=html5).read()
       
       fmt_url_count = self.fmt_maps_update_markup(content)
       if (fmt_url_count == 0):
@@ -971,14 +983,31 @@ class YTVideoRef:
       if (isinstance(markup, bytes)):
          markup = markup.decode('utf-8','surrogateescape')
       
+      rv = 0
+      # HTML5 parsing
+      for line in markup.split('\n'):
+         m = self.re_fmt_url_html5.search(line)
+         if (m is None):
+            continue
+         try:
+            fmt = int(m.groupdict()['fmt'])
+         except ValueError:
+            self.log(30, 'Failed to parse format from html5 video line: {0!a}.'.format(line))
+            continue
+         
+         mt = m.groupdict()['mime_type']
+         
+         if (not (fmt in self.fmt_url_map)):
+            self.log(20, 'Caching direct url for new format {0:d} ({1}) parsed from html5-type markup.'.format(fmt, mt))
+            self.fmt_url_map[fmt] = m.groupdict()['url']
+         rv += 1
+      
       m = self.re_fmt_url_map_markup.search(markup)
       if (m is None):
-        return 0
+        return rv
       umm = m.groupdict()['umm']
-      
       umm_unescaped = escape_decode(umm)
       
-      rv = 0
       for (re, _map, log) in ((self.re_fmt_url_map, self.fmt_url_map, True), (self.re_fmt_stream_map, self._fmt_stream_map, False)):
          m2 = re.search(umm_unescaped)
          if (m2 is None):
@@ -994,15 +1023,12 @@ class YTVideoRef:
       if (cache_ok and self._content_direct_url):
          return self._content_direct_url
       
+      if (not self._tried_md_fetch):
+         self.get_metadata_blocking()
+      
       for fmt in self.fpl:
          if (fmt == FMT_DEFAULT):
             continue
-         
-         if not (fmt in self.fmt_url_map):
-            # TODO: We used to have to do this to get definite information about presence or absence of formats, but
-            # superficial current tests suggest that yt format lists might always be complete now. Do some more research and
-            # drop this if possible.
-            self.fmt_url_map_fetch_update(fmt)
          try:
             url = self.fmt_url_map[fmt]
          except KeyError:
@@ -1172,6 +1198,7 @@ class Config:
    list_url_manglers = False
    dl_path_temp = '.'
    dl_path_final = '.'
+   try_html5 = False
    
    def __init__(self):
       self._url_manglers = {}
@@ -1255,6 +1282,8 @@ class Config:
       oa('--url-mangler', '-u', dest='url_mangler', metavar='UMNAME', help='Fetch metadata pages through specified HTTP gateway')
       oa('--mkv', '-m', dest='make_mkv', action='store_true', help='Mux downloaded data (AV+Subs) into MKV file.')
       oa('--nomkv', dest='make_mkv', action='store_false', help="Don't mux downloaded data (AV+Subs) into MKV file.")
+      oa('--html5', dest='try_html5', action='store_true', help="Opt into html5 experiment for watch page retrieval (required for webm downloads)")
+      oa('--nohtml5', dest='try_html5', action='store_false', help="Opt into html5 experiment for watch page retrieval (this is required for webm downloads, but will disable fparsing of flv urls from watch pages.)")
       oa('-q', '--quiet', dest='loglevel', action='store_const', const=30, help='Limit output to errors.')
       
       rv = op.parse_args()
@@ -1351,7 +1380,7 @@ def main():
 
    for vid in vids:
       log(20, 'Fetching data for video with id {0!a}.'.format(vid))
-      ref = YTVideoRef(vid, fpl, conf.dl_path_temp, conf.dl_path_final, conf.make_mkv)
+      ref = YTVideoRef(vid, fpl, conf.dl_path_temp, conf.dl_path_final, conf.make_mkv, conf.try_html5)
       
       if not (um is None):
          ref.mangle_yt_url = um
