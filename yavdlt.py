@@ -24,6 +24,7 @@ import collections
 from collections import deque, OrderedDict
 import html.parser
 import http.client
+import http.cookiejar
 import logging
 import os
 import os.path
@@ -583,6 +584,15 @@ class YTVideoRef:
       self._content_direct_url = None
       self._fmt = None
       self.make_mkv = make_mkv
+      self._cookiejar = http.cookiejar.CookieJar()
+      self._url_opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookiejar))
+   
+   def urlopen(self, url, *args, **kwargs):
+      """Open specified url, performing mangling if necessary, and return urllib response object."""
+      url = self.mangle_yt_url(url)
+      req = urllib.request.Request(url, *args, **kwargs)
+      rv = self._url_opener.open(req)
+      return rv
    
    def mangle_yt_url(self, url):
       """This function will be called to preprocess any and all YT urls.
@@ -606,7 +616,7 @@ class YTVideoRef:
       return rv
    
    def url_get_annots(self):
-      return self.mangle_yt_url('http://www.google.com/reviews/y/read2?video_id={0}'.format(self.vid))
+      return 'http://www.google.com/reviews/y/read2?video_id={0}'.format(self.vid)
    
    def get_token_blocking(self):
       self.log(20, 'Acquiring YT metadata.')
@@ -620,8 +630,7 @@ class YTVideoRef:
       from urllib.parse import splitvalue, unquote, unquote_plus
       
       url = self.URL_FMT_GETVIDEOINFO.format(self.vid)
-      url = self.mangle_yt_url(url)
-      content = urllib.request.urlopen(url).read().decode('ascii')
+      content = self.urlopen(url).read().decode('ascii')
       def uqv(d):
          (key, val) = d
          return (key, unquote_plus(val))
@@ -649,9 +658,8 @@ class YTVideoRef:
          fmt = ''
       
       url = self.URL_FMT_WATCH.format(self.vid, fmt)
-      url = self.mangle_yt_url(url)
       
-      content = urllib.request.urlopen(url).read()
+      content = self.urlopen(url).read()
       
       m = self.re_tok.search(content)
       if (m is None):
@@ -841,8 +849,7 @@ class YTVideoRef:
       else:
          prefix_data = None
       
-      req = urllib.request.Request(url, headers=req_headers)
-      res = urllib.request.urlopen(req)
+      res = self.urlopen(url, headers=req_headers)
       
       cl = self._content_length
       
@@ -897,7 +904,7 @@ class YTVideoRef:
    def fetch_annotations(self):
       url = self.url_get_annots()
       self.log(20, 'Fetching annotations from {0!a}.'.format(url))
-      req = urllib.request.urlopen(url)
+      req = self.urlopen(url)
       content = req.read()
       self.log(20, 'Parsing annotation data.')
       annotations = parse_ytanno(BytesIO(content))
@@ -913,9 +920,9 @@ class YTVideoRef:
       return (annotations, sts_raw, sts_nospam)
    
    def fetch_tt(self):
-      url = self.mangle_yt_url('http://video.google.com/timedtext?v={0}&type=list'.format(self.vid))
+      url = 'http://video.google.com/timedtext?v={0}&type=list'.format(self.vid)
       self.log(20, 'Checking for timedtext data.')
-      req = urllib.request.urlopen(url)
+      req = self.urlopen(url)
       content = req.read()
       if (content == b''):
          self.log(20, 'No timedtext data found.')
@@ -946,8 +953,7 @@ class YTVideoRef:
    
    def fmt_url_map_fetch_update(self, fmt):
       url = self.URL_FMT_WATCH.format(self.vid, fmt)
-      url = self.mangle_yt_url(url)
-      content = urllib.request.urlopen(url).read()
+      content = self.urlopen(url).read()
       self.fmt_maps_update_markup(content)
    
    def fmt_map_update(self, ums, _map, log=True):
@@ -1030,7 +1036,7 @@ class YTVideoRef:
       
       if (fmt in self.fmt_url_map):
          self.log(20, 'Using cached direct video url.')
-         return self.mangle_yt_url(self.fmt_url_map[fmt])
+         return self.fmt_url_map[fmt]
       
       if (self.tok is None):
          raise ValueError('Need to get token first.')
@@ -1040,7 +1046,7 @@ class YTVideoRef:
       else:
          fmtstr = '&fmt={0:d}'.format(fmt)
       
-      rv = self.mangle_yt_url(self.URL_FMT_GETVIDEO.format(self.vid, self.tok, fmtstr))
+      rv = self.URL_FMT_GETVIDEO.format(self.vid, self.tok, fmtstr)
       return rv
 
 
