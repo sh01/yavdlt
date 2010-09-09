@@ -594,9 +594,10 @@ class YTVideoRef:
          domain_specified=True, domain_initial_dot=True, path='/', path_specified=True, secure=False, expires=None,
          discard=True, comment=None, comment_url=None, rest={}, rfc2109=False)
    
-   def urlopen(self, url, *args, html5=False, **kwargs):
+   def urlopen(self, url, *args, html5=False, mangle=True, **kwargs):
       """Open specified url, performing mangling if necessary, and return urllib response object."""
-      url = self.mangle_yt_url(url)
+      if (mangle):
+         url = self.mangle_yt_url(url)
       req = urllib.request.Request(url, *args, **kwargs)
       if (html5):
          cj = http.cookiejar.CookieJar()
@@ -858,7 +859,7 @@ class YTVideoRef:
       else:
          prefix_data = None
       
-      res = self.urlopen(url, headers=req_headers)
+      res = self.urlopen(url, headers=req_headers, mangle=False)
       
       cl = self._content_length
       
@@ -1031,11 +1032,12 @@ class YTVideoRef:
          if (fmt == FMT_DEFAULT):
             continue
          try:
-            url = self.fmt_url_map[fmt]
+            url_r = self.fmt_url_map[fmt]
          except KeyError:
             self.log(20, 'No url for fmt {0} available.'.format(fmt))
             continue
          
+         url = self.mangle_yt_url(url_r)
          rc = 301
          
          while (301 <= rc <= 303):
