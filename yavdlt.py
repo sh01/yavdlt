@@ -583,6 +583,7 @@ class YTVideoRef:
       self._fmt = None
       self.make_mkv = make_mkv
       self._cookiejar = http.cookiejar.CookieJar()
+      self._cookiejar.set_policy(http.cookiejar.DefaultCookiePolicy(allowed_domains=[]))
       self._try_html5 = try_html5
       self._url_opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookiejar))
    
