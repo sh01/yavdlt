@@ -549,7 +549,7 @@ class YTVideoRef:
    re_fmt_stream_map = re.compile('fmt_stream_map=(?P<ms>[^"&]+)&')
    
    URL_FMT_WATCH = 'http://www.youtube.com/watch?v={0}&has_verified=1'
-   URL_FMT_GETVIDEOINFO = 'http://youtube.com/get_video_info?video_id={0}'
+   URL_FMT_GETVIDEOINFO = 'http://www.youtube.com/get_video_info?video_id={0}'
    
    logger = logging.getLogger('YTVideoRef')
    log = logger.log
