@@ -289,10 +289,10 @@ class ASSSubSet:
          yield (int(sub.start*cf), int(sub.dur*cf), data_r, True)
          i += 1
    
-   def mkv_add_track(self, mkvb):
+   def mkv_add_track(self, mkvb, flag_default=False):
       from mcio_codecs import CODEC_ID_ASS
       cpd = self._get_header() + self._get_header2(ASSSubtitle.ASS_FIELD_NAMES)
-      mkvb.add_track(self._iter_subs_mkv(mkvb.tcs), mkvb.TRACKTYPE_SUB, CODEC_ID_ASS, cpd, False, track_name=self.name, track_lang=self.lc)
+      mkvb.add_track(self._iter_subs_mkv(mkvb.tcs), mkvb.TRACKTYPE_SUB, CODEC_ID_ASS, cpd, False, track_name=self.name, track_lang=self.lc, flag_default=flag_default)
 
 
 YTAnnotationRRBase = collections.namedtuple('YTAnnotationRRBase', ('t','x','y','w','h','d'))

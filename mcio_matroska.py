@@ -1694,7 +1694,7 @@ class MatroskaBuilder:
          return (ttype == TRACKTYPE_AUDIO)
       return True
 
-   def _build_track(self, ttype, codec, cid, default_dur, make_cues, ms_cm, track_name, track_lc, *args, **kwargs):
+   def _build_track(self, ttype, codec, cid, default_dur, make_cues, ms_cm, track_name, track_lc, flag_default, *args, **kwargs):
       """Build MatroskaElementTrackEntry structure and add to tracks."""
       track_num = len(self.tracks.sub) + 1
       
@@ -1734,7 +1734,8 @@ class MatroskaBuilder:
          MatroskaElementTrackUID.new(track_num),
          MatroskaElementTrackType.new(ttype),
          MatroskaElementFlagLacing.new(lacing),
-         MatroskaElementCodec.new(mkv_codec)
+         MatroskaElementCodec.new(mkv_codec),
+         MatroskaElementFlagDefault.new(flag_default)
       ]
       if not (cid is None):
          sub_els.append(MatroskaElementCodecPrivate.new(cid))
@@ -1786,9 +1787,9 @@ class MatroskaBuilder:
       self._add_track_data(track_num, data)
    
    def add_track(self, data, ttype, codec, codec_init_data, make_cues, *args, default_dur=None, ms_cm=MS_CM_AUTO,
-         track_name=None, track_lang=None, **kwargs):
+         track_name=None, track_lang=None, flag_default=True, **kwargs):
       """Add track to MKV structure."""
-      (track_num, track_entry) = self._build_track(ttype, codec, codec_init_data, default_dur, make_cues, ms_cm, track_name, track_lang, *args, **kwargs)
+      (track_num, track_entry) = self._build_track(ttype, codec, codec_init_data, default_dur, make_cues, ms_cm, track_name, track_lang, flag_default, *args, **kwargs)
       self._add_track_data(track_num, data)
    
    def sort_tracks(self):
