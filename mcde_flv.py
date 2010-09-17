@@ -782,7 +782,9 @@ class FLVReader:
             d = avtmap[tag.type]
          except KeyError:
             if (tag.type == 18):
-               md.update(tag.get_metadata())
+               md_add = tag.get_metadata()
+               if not (md_add is None):
+                  md.update(md_add)
             continue
          
          try:
