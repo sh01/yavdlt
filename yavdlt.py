@@ -720,7 +720,7 @@ class YTVideoRef:
          title = title.decode('utf-8')
       
       for c in title:
-         if (c.isalnum() or (c in '-')):
+         if (c.isalnum() or (c in '-') or ((ord(c) > 127) and c.isprintable())):
             mtitle += c
          elif (c in ' _'):
             mtitle += '_'
