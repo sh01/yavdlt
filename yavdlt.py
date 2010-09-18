@@ -800,7 +800,7 @@ class YTVideoRef:
 
       if (dtm & DATATYPE_TIMEDTEXT):
          ttd = self.fetch_tt()
-         if not (ttd is None):
+         if (ttd):
             if (self.make_mkv):
                self.log(20, 'Muxing TimedText data into MKV.')
                for sts in ttd:
