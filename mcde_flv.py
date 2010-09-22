@@ -122,11 +122,11 @@ class ASParser:
    @_adh(10)
    def read_strictarray(self):
       (l,) = struct.unpack('>L', self._read(4))
-      return dict(self.read_obj() for i in range(l))
+      return [self.read_value() for i in range(l)]
       
    @_adh(11)
    def read_date(self):
-      (ts,tz_off) = struct.unpack('>dS', self._read(10))
+      (ts,tz_off) = struct.unpack('>dh', self._read(10))
       ts /= 1000
       return (ts, tz_off)
    
