@@ -38,6 +38,9 @@ def movts2unixtime(mov_ts):
 class MovParserError(ContainerParserError):
    pass
 
+class SubboxNotFoundError(MovParserError):
+   pass
+
 class BoxBoundaryOverrun(MovParserError):
    pass
 
@@ -60,9 +63,10 @@ def _make_mbt(x):
 
 class MovContext:
    """Aggregate type for external objects (backing fds) and mov parser state."""
-   def __init__(self, f):
+   def __init__(self, f, tolerate_overrun_elements=False):
       self.f = f
       self._track_type = None
+      self._t_toe = tolerate_overrun_elements
 
 class MovBox:
    cls_map = {}
@@ -159,18 +163,21 @@ class MovBox:
       while ((off < off_limit) and (len(f.read(8)) == 8)):
          f.seek(off)
          atom = cls.build_from_ctx(ctx)
-         rv.append(atom)
          off += atom.size
+         if (off > off_limit):
+            break
+         
+         rv.append(atom)
          f.seek(off)
       
-      if (off > off_limit):
+      if ((off > off_limit) and (not ctx._t_toe)):
          raise BoxBoundaryOverrun()
       
       return rv
    
    @classmethod
    def build_seq_from_file(cls, f, *args, **kwargs):
-      ctx = MovContext(f)
+      ctx = MovContext(f, *args, **kwargs)
       return cls.build_seq_from_ctx(ctx)
 
 def _mov_box_type_reg(cls):
@@ -216,7 +223,7 @@ class MovBoxBranch(MovBox):
       for box in self.sub:
          if (box.type == btype):
             return box
-      raise ValueError('No subboxes of type {0}.'.format(btype))
+      raise SubboxNotFoundError('No subboxes of type {0}.'.format(btype))
    
    def find_subboxes(self, btype):
       """Return sequence of all direct subboxes of specified boxtype."""
@@ -335,6 +342,27 @@ class MovBoxSampleTableRepeats(MovBoxSampleTableBase):
 class MovSampleEntry(MovBoxBranch):
    bfmt = '>6xH'
    bfmt_len = struct.calcsize(bfmt)
+   # Data from <http://www.mp4ra.org/object.html>
+   _OTI2CID = {
+      0x20: CODEC_ID_MPEG4_2,
+      0x21: CODEC_ID_MPEG4_10,
+      0x60: CODEC_ID_MPEG2_2,
+      0x61: CODEC_ID_MPEG2_2,
+      0x62: CODEC_ID_MPEG2_2,
+      0x63: CODEC_ID_MPEG2_2,
+      0x64: CODEC_ID_MPEG2_2,
+      0x65: CODEC_ID_MPEG2_2,
+      
+      0x40: CODEC_ID_AAC,
+      0x66: CODEC_ID_AAC,
+      0x67: CODEC_ID_AAC,
+      0x68: CODEC_ID_AAC,
+      0x69: CODEC_ID_MPEG2_3,
+      0x6B: CODEC_ID_MP3,
+      0x6D: CODEC_ID_PNG,
+      0xA5: CODEC_ID_AC3
+   }
+   
    def _init2(self):
       self.hlen += self.bfmt_len
       (self.dri,) = struct.unpack(self.bfmt, self.get_body()[:self.bfmt_len])
@@ -343,14 +371,27 @@ class MovSampleEntry(MovBoxBranch):
       """Return codec-specific initialization data"""
       try:
          esds = self.find_subbox('esds')
-      except ValueError:
+      except SubboxNotFoundError:
          return None
       
       return esds.get_dsi()
    
-   def get_oti(self):
-      """Return ObjectTypeIndication for this stream."""
-      return self.find_subbox('esds').get_oti()
+   def get_codec(self):
+      """Return codec id for this stream."""
+      try:
+         esds = self.find_subbox('esds')
+      except SubboxNotFoundError as exc1:
+         try:
+            rv = self._B2CID[self.type]
+         except KeyError as exc2:
+            raise MovParserError('Unable to determine codec id for sample entry box {0!a}: no esds subbox, and unknown type.'.format(self)) from exc1
+      else:
+         oti = esds.get_oti()
+         try:
+            rv = self._OTI2CID[oti]
+         except KeyError as exc:
+            raise MovParserError('Unknown mp4 OTI {0!a}.'.format(oti)) from exc
+      return rv
    
    def _format_f(self, fs):
       return '<{0} type: {1} dri: {2}>'.format(type(self).__name__, self.type, self.dri)
@@ -385,11 +426,12 @@ class MovBoxSampleDescription(MovFullBoxBranch):
    
    def _init2(self):
       if (self.c._track_type is None):
-         raise ParserError('No track type information available.')
+         raise MovParserError('No track type information available.')
       try:
          self.sub_cls_default = self.sub_cls_map[self.c._track_type]
-      except KeyError:
+      except KeyError as exc:
          self.sub_cls_default = MovSampleEntryMpeg
+         #raise MovParserError('Unsupported track type {0}.'.format(FourCC(self.c._track_type))) from exc
       
       super()._init2()
       (elcount,) = struct.unpack(self.bfmt, self.get_body()[:self.bfmt_len])
@@ -405,6 +447,10 @@ class MovSampleEntryVideo(MovSampleEntry):
    track_type = FourCC(b'vide')
    bfmt2 = '>16xHHLL4xHB31sH2x'
    bfmt2_len = struct.calcsize(bfmt2)
+   _B2CID = {
+      FourCC('SVQ3'): CODEC_ID_SVQ3,
+      FourCC('png '): CODEC_ID_PNG
+   }
    def _init2(self):
       super()._init2()
       (self.width, self.height, self.res_h, self.res_v, self.frame_count, cname_len, cname, self.depth
@@ -428,22 +474,27 @@ class MovSampleEntryVideo_AVC1(MovSampleEntryVideo):
       """Return codec-specific initialization data, H264 variant."""
       return self.find_subbox('avcC').get_body()
    
-   def get_oti(self):
+   def get_codec(self):
       """Return ObjectTypeIndication, H264 variant."""
-      return 0x21
+      return CODEC_ID_H264
 
 @_mov_sample_entry_type_reg
 class MovSampleEntrySound(MovSampleEntry):
    track_type = FourCC(b'soun')
    bfmt2 = '>8xHH4xL'
    bfmt2_len = struct.calcsize(bfmt2)
+   _B2CID = {
+      FourCC('.mp3'): CODEC_ID_MP3,
+      FourCC('mp4a'): CODEC_ID_AAC
+   }
+   
    def _init2(self):
       super()._init2()
       (self.channel_count, self.sample_size, self.sample_rate) = struct.unpack(self.bfmt2, self.get_body()[:self.bfmt2_len])
       self.sample_rate /= 65536
       self.hlen += self.bfmt2_len
       MovBoxBranch._init2(self)
-   
+      
    def _format_f(self, fs):
       return '<{0} type: {1} dri: {2} channels: {3} sample size: {4} sample rate: {5}>'.format(type(self).__name__, self.type,
          self.dri, self.channel_count, self.sample_size, self.sample_rate)
@@ -453,6 +504,7 @@ class MovSampleEntryMpeg(MovSampleEntry):
    type = FourCC('mp4s')
    def _init2(self):
       super()._init2()
+      self.sub = []
       MovBoxBranch._init2(self)
 
 class _CPData:
@@ -680,27 +732,7 @@ class MovBoxCompositionTimeToSample(MovBoxSampleTableRepeats):
 
 @_mov_box_type_reg
 class MovBoxMovie(MovBoxBranch):
-   type = FourCC(b'moov')
-   # Data from <http://www.mp4ra.org/object.html>
-   CODEC2ID = {
-      0x20: CODEC_ID_MPEG4_2,
-      0x21: CODEC_ID_MPEG4_10,
-      0x60: CODEC_ID_MPEG2_2,
-      0x61: CODEC_ID_MPEG2_2,
-      0x62: CODEC_ID_MPEG2_2,
-      0x63: CODEC_ID_MPEG2_2,
-      0x64: CODEC_ID_MPEG2_2,
-      0x65: CODEC_ID_MPEG2_2,
-      
-      0x40: CODEC_ID_AAC,
-      0x66: CODEC_ID_AAC,
-      0x67: CODEC_ID_AAC,
-      0x68: CODEC_ID_AAC,
-      0x69: CODEC_ID_MPEG2_3,
-      0x6B: CODEC_ID_MP3,
-      0xA5: CODEC_ID_AC3
-   }
-   
+   type = FourCC(b'moov')   
    _HTYPE_SOUN = FourCC(b'soun')
    _HTYPE_VIDE = FourCC(b'vide')
    
@@ -721,7 +753,6 @@ class MovBoxMovie(MovBoxBranch):
       for track in tracks:
          mdhd = track.get_mdhd()
          se = track.get_sample_entry()
-         mp4_codec = se.get_oti()
          
          htype = track.find_subbox(b'mdia').find_subbox(b'hdlr').handler_type
          if (htype == self._HTYPE_VIDE):
@@ -733,11 +764,7 @@ class MovBoxMovie(MovBoxBranch):
          else:
             continue
          
-         try:
-            codec_id = self.CODEC2ID[mp4_codec]
-         except KeyError as exc:
-            raise MovParserError('Unknown mp4 codec {0!a}.'.format(mp4_codec)) from exc
-         
+         codec_id = se.get_codec()
          ts_fact = (ts_base / mdhd.time_scale)
          mcd = track._get_most_common_dur()
          mb.add_track(track.get_sample_data(elmult*ts_fact, mcd), ttype, codec_id, se.get_codec_init_data(),
@@ -763,7 +790,7 @@ class MovBoxTrack(MovBoxBranch):
       for name in (b'stss', b'stco', b'co64', b'edts', b'ctts'):
          try:
             table = stbl.find_subbox(name)
-         except ValueError:
+         except SubboxNotFoundError:
             table = None
          setattr(self, name.decode('ascii'), table)
    
@@ -818,7 +845,7 @@ class MovBoxTrack(MovBoxBranch):
       if not (self.edts is None):
          raise MovParserError('EDTS support is currently unimplemented.')
       
-      sz = self.stsz.entry_data
+      get_sz = self.stsz.get_ss
       sc = self.stsc.entry_data_pp
       co = self.stco.entry_data
       sduri = self.sample_durations()
@@ -837,7 +864,7 @@ class MovBoxTrack(MovBoxBranch):
          coi = self.ctts.__iter__()
       
       s = 0
-      s_lim = len(sz)
+      s_lim = len(co)
       s_sublim = 0
       
       c = 0
@@ -878,7 +905,7 @@ class MovBoxTrack(MovBoxBranch):
          else:
             dur = round(dur*time_mult)
          
-         size = sz[s]
+         size = get_sz(s)
          yield ((round(tv_d*time_mult), dur, DataRefFile(self.c.f, s_off, size), is_sync))
          s_off += size
          s += 1
@@ -917,7 +944,12 @@ class MovBoxHandlerReference(MovFullBox):
          pass
       
       self.name = name
-      self.c._track_type = self.handler_type
+      # HACK: Work around files that have a hdlr box below minf, as well as directly in mdia; the former is used to set a
+      # handler data type for alis information, as opposed to the stream itself.
+      # It'd be cleaner to look at the precise part of the structure where this occurs, instead of assuming that the first
+      # element of this type is the right one to use for stream handler identification.
+      if (self.c._track_type is None):
+         self.c._track_type = self.handler_type
    
    def _format_f(self, fs):
       return '<{0} htype: {1} name: {2}>'.format(type(self).__name__, FourCC(self.handler_type), self.name)
@@ -978,8 +1010,8 @@ def _dump_atoms(seq, depth=0):
       if (hasattr(atom, 'sub')):
          _dump_atoms(atom.sub, depth+1)
    
-def make_mkvb_from_file(f):
-   boxes = MovBox.build_seq_from_file(f)
+def make_mkvb_from_file(f, *args, **kwargs):
+   boxes = MovBox.build_seq_from_file(f, *args, **kwargs)
    for box in boxes:
       if isinstance(box, MovBoxMovie):
          break
@@ -993,11 +1025,13 @@ def main():
    fn = sys.argv[1]
    f = open(fn, 'rb')
    
-   boxes = MovBox.build_seq_from_file(f)
+   ot = ('-t' in sys.argv[2:])
+   
+   boxes = MovBox.build_seq_from_file(f, tolerate_overrun_elements=ot)
    _dump_atoms(boxes)
    
    f.seek(0)
-   mb = make_mkvb_from_file(f)
+   mb = make_mkvb_from_file(f, tolerate_overrun_elements=ot)
    mb.set_writingapp('mcde_mp4 selftester')
    mb.sort_tracks()
    mb.write_to_file(open(b'__mp4dump.mkv.tmp', 'wb'))
