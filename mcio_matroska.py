@@ -1335,7 +1335,8 @@ class BitmapInfoHeader:
    
    ID2CODEC = {
       CODEC_ID_FLV1: FourCC(b'FLV1'),
-      CODEC_ID_VP6: FourCC(b'FLV4')
+      CODEC_ID_VP6: FourCC(b'FLV4'),
+      CODEC_ID_PNG: FourCC(b'MPNG')
    }
    
    def __init__(self, codec_id, width, height):

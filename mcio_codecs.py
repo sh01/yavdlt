@@ -42,6 +42,9 @@ def __init():
       ('H264', 'AVC', 'MPEG4_10'),
       'SNOW',
       'THEORA',
+      ## mp4 stuff
+      'SVQ3',
+      'PNG',
       ## flash video stuff
       'FLASHSV', # flash screen video
       'FLV1', # H263 variant: flash video
