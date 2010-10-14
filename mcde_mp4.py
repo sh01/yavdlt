@@ -707,6 +707,9 @@ class MovBoxSampleSize(MovBoxSampleTableSimple):
    def _data_table_present(self):
       return (self.sample_size is None)
    
+   def get_ss_count(self):
+      return self._elnum
+   
    def get_ss(self, i):
       return (self.sample_size or self.entry_data[i])
 
@@ -864,7 +867,7 @@ class MovBoxTrack(MovBoxBranch):
          coi = self.ctts.__iter__()
       
       s = 0
-      s_lim = len(co)
+      s_lim = self.stsz.get_ss_count()
       s_sublim = 0
       
       c = 0
