@@ -1310,7 +1310,7 @@ class Config:
       oa('--mkv', '-m', dest='make_mkv', action='store_true', help='Mux downloaded data (AV+Subs) into MKV file.')
       oa('--nomkv', dest='make_mkv', action='store_false', help="Don't mux downloaded data (AV+Subs) into MKV file.")
       oa('--html5', dest='try_html5', action='store_true', help="Opt into html5 experiment for watch page retrieval (required for webm downloads)")
-      oa('--nohtml5', dest='try_html5', action='store_false', help="Opt into html5 experiment for watch page retrieval (this is required for webm downloads, but will disable fparsing of flv urls from watch pages.)")
+      oa('--nohtml5', dest='try_html5', action='store_false', help="Opt into html5 experiment for watch page retrieval (this is required for webm downloads, but will disable parsing of flv urls from watch pages.)")
       oa('-k', '--drop-track-types', dest='drop_tt', action='store', metavar='TTSPEC', help="Track types to drop ('v': video; 'a': audio).")
       oa('-q', '--quiet', dest='loglevel', action='store_const', const=30, help='Limit output to errors.')
       
