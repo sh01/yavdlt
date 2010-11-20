@@ -709,6 +709,9 @@ class MatroskaElementTrackEntry(MatroskaElementMaster):
    type = EBMLVInt(46)
    def get_track_type(self):
       return self.get_sub_by_cls(MatroskaElementTrackType).val
+   
+   def get_track_id(self):
+      return self.get_sub_by_cls(MatroskaElementTrackUID).val
 
 @_mkv_type_reg
 class MatroskaElementTrackTranslate(MatroskaElementMaster):
@@ -1554,6 +1557,13 @@ class MatroskaBuilder:
       
       fl.append(frame)
       return frame
+   
+   def get_tracks_by_type(self, tt):
+      return [t for t in self.tracks.sub if (t.get_track_type() == tt)]
+   
+   def drop_track(self, tid):
+      del(self.tracks.sub[tid-1])
+      del(self.frames[tid])
    
    def _build_clusters(self):
       frames = {}

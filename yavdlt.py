@@ -567,8 +567,13 @@ class YTVideoRef:
       'video/x-flv': 'mcde_flv',
       'video/webm': 'mcio_matroska'
    }
-
-   def __init__(self, vid, format_pref_list, dl_path_tmp, dl_path_final, make_mkv, try_html5=False):
+   
+   _track_type_map = {
+      'a': ('TRACKTYPE_AUDIO', 'audio'),
+      'v': ('TRACKTYPE_VIDEO', 'video'),  
+   }
+   
+   def __init__(self, vid, format_pref_list, dl_path_tmp, dl_path_final, make_mkv, try_html5=False, drop_tt=''):
       self._tried_md_fetch = False
       self.vid = vid
       self._mime_type = None
@@ -586,6 +591,10 @@ class YTVideoRef:
       self._cookiejar.set_policy(http.cookiejar.DefaultCookiePolicy(allowed_domains=[]))
       self._try_html5 = try_html5
       self._url_opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookiejar))
+      for tt in drop_tt:
+         if not (tt in self._track_type_map):
+            raise ValueError('Unknown track type {!r}.'.format(tt))
+      self.drop_tt = ''.join(sorted(set(drop_tt)))
    
    @staticmethod
    def _make_html5_optin_cookie():
@@ -703,7 +712,10 @@ class YTVideoRef:
    
    def _choose_final_fn(self, ext=None):
       if ((ext is None) and self.make_mkv):
-         ext = 'mkv'
+         if (self.drop_tt):
+            ext = '[-{}].mkv'.format(self.drop_tt)
+         else:
+            ext = 'mkv'
       
       return os.path.join(self.dlp_final, self._choose_fn(ext))
    
@@ -808,8 +820,19 @@ class YTVideoRef:
                
             else:
                self._dump_ttd(ttd)
-         
+      
       if (self.make_mkv):
+         if (self.drop_tt):
+            import mcio_matroska
+            for tt in self.drop_tt:
+               (tt_attr, tt_name_hr) = self._track_type_map[tt]
+               tt_mkv = getattr(mcio_matroska, tt_attr)
+               tracks = mkvb.get_tracks_by_type(tt_mkv)
+               self.log(20, 'Dropping {:d} {} track(s) from file as requested.'.format(len(tracks), tt_name_hr))
+               for track in tracks:
+                  mkvb.drop_track(track.get_track_id())
+            mkvb.sort_tracks()
+         
          fn_out = self._choose_tmp_fn('mkv')
          self.log(20, 'Writing MKV data to file.')
          f_out = open(fn_out, 'w+b')
@@ -1202,6 +1225,7 @@ class Config:
    dl_path_temp = '.'
    dl_path_final = '.'
    try_html5 = False
+   drop_tt = ''
    
    def __init__(self):
       self._url_manglers = {}
@@ -1287,6 +1311,7 @@ class Config:
       oa('--nomkv', dest='make_mkv', action='store_false', help="Don't mux downloaded data (AV+Subs) into MKV file.")
       oa('--html5', dest='try_html5', action='store_true', help="Opt into html5 experiment for watch page retrieval (required for webm downloads)")
       oa('--nohtml5', dest='try_html5', action='store_false', help="Opt into html5 experiment for watch page retrieval (this is required for webm downloads, but will disable fparsing of flv urls from watch pages.)")
+      oa('-k', '--drop-track-types', dest='drop_tt', action='store', metavar='TTSPEC', help="Track types to drop ('v': video; 'a': audio).")
       oa('-q', '--quiet', dest='loglevel', action='store_const', const=30, help='Limit output to errors.')
       
       rv = op.parse_args()
@@ -1383,7 +1408,7 @@ def main():
 
    for vid in vids:
       log(20, 'Fetching data for video with id {0!a}.'.format(vid))
-      ref = YTVideoRef(vid, fpl, conf.dl_path_temp, conf.dl_path_final, conf.make_mkv, conf.try_html5)
+      ref = YTVideoRef(vid, fpl, conf.dl_path_temp, conf.dl_path_final, conf.make_mkv, conf.try_html5, conf.drop_tt)
       
       if not (um is None):
          ref.mangle_yt_url = um
