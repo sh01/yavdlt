@@ -42,7 +42,6 @@ def escape_decode(s):
    from codecs import escape_decode
    return escape_decode(s.encode('utf-8'))[0].decode('utf-8')
 
-
 # ---------------------------------------------------------------- ASS sub building code
 def make_ass_color(r,g,b,a):
    for val in (r,g,b,a):
@@ -540,13 +539,16 @@ class YTimedTextList:
 
 
 class YTVideoRef:
-   re_title = re.compile(b'<link rel="alternate" +type="application/json\+oembed" +href="[^"]*" +title="(?P<text>.*?)" */>')
+   re_title = re.compile(b'<meta name="title" content="(?P<text>[^"]*?)">')
    re_err = re.compile(b'<div[^>]* id="error-box"[^>]*>.*?<div[^>]* class="yt-alert-content"[^>]*>(?P<text>.*?)</div>', re.DOTALL)
    re_err_age = re.compile(b'<div id="verify-age-details">(?P<text>.*?)</div>', re.DOTALL)
+   re_fmt_playerconfig = re.compile("""'PLAYER_CONFIG' *: *(?P<text>[^ ].*"})[^"]*$""")
    re_fmt_url_map_markup = re.compile(r'\? "(?P<umm>.*?fmt_url_map=.*?>)"')
    re_fmt_url_html5 = re.compile('videoPlayer.setAvailableFormat\("(?P<url>[^"]+)", "(?P<mime_type>video/[^"/ \t;]*);[^"]*", "[^"]*", "(?P<fmt>[0-9]+)"\);')
    re_fmt_url_map = re.compile('fmt_url_map=(?P<ms>[^"&]+)&')
    re_fmt_stream_map = re.compile('fmt_stream_map=(?P<ms>[^"&]+)&')
+   
+   re_fmt_flashvars = re.compile('flashvars="(?P<text>[^"]*)"', re.DOTALL)
    
    URL_FMT_WATCH = 'http://www.youtube.com/watch?v={0}&has_verified=1'
    URL_FMT_GETVIDEOINFO = 'http://www.youtube.com/get_video_info?video_id={0}'
@@ -646,14 +648,16 @@ class YTVideoRef:
    def get_metadata_blocking(self):
       self.log(20, 'Acquiring YT metadata.')
       self._tried_md_fetch = True
+      need_watchpage = self._try_html5
+      
       try:
          self._get_metadata_getvideoinfo()
       except YTError:
          self.log(20, 'Video info retrieval failed; falling back to retrieval of metadata from watch page.')
-         self._get_metadata_watch(html5=False)
+         need_watchpage = True
       
-      if (self._try_html5):
-         self._get_metadata_watch(html5=True)
+      if (need_watchpage):
+         self._get_metadata_watch(html5=self._try_html5)
    
    def _get_metadata_getvideoinfo(self):
       from urllib.parse import splitvalue, unquote, unquote_plus
@@ -704,7 +708,7 @@ class YTVideoRef:
          self.log(30, 'Unable to extract video title; this probably indicates a yavdlt bug.')
          self.title = '--untitled--'
       else:
-         self.title = m.groupdict()['text'].decode('utf-8')
+         self.title = xml_unescape(m.groupdict()['text'].decode('utf-8'))
          self.log(20, 'Acquired video title {0!a}.'.format(self.title))
    
    def _choose_tmp_fn(self, ext=None):
@@ -1005,40 +1009,80 @@ class YTVideoRef:
    
    def fmt_maps_update_markup(self, markup):
       from urllib.parse import unquote
+      import json
+      
       if (isinstance(markup, bytes)):
          markup = markup.decode('utf-8','surrogateescape')
       
       rv = 0
       # HTML5 parsing
       for line in markup.split('\n'):
-         m = self.re_fmt_url_html5.search(line)
+         m = self.re_fmt_playerconfig.search(line)
          if (m is None):
             continue
+         
+         player_config_text = m.groupdict()['text']
          try:
-            fmt = int(m.groupdict()['fmt'])
-         except ValueError:
-            self.log(30, 'Failed to parse format from html5 video line: {0!a}.'.format(line))
+            pca = json.loads(player_config_text)['args']
+         except (ValueError, KeyError) as exc:
+            self.log(30, 'Unable to decode PLAYER_CONFIG dict {!r}:'.format(player_config_text), exc_info=True)
             continue
          
-         mt = m.groupdict()['mime_type']
+         for (key, _map, log) in (
+            ('fmt_url_map', self.fmt_url_map, True),
+            ('fmt_stream_map', self._fmt_stream_map, False)):
+            try:
+               map_data = pca[key]
+            except KeyError:
+               self.log(30, 'Unable to extract {!r} element from PCA dict {!r}. Skipping.'.format(
+                   key, pca))
+               continue
+            rv += self.fmt_map_update(map_data, _map, log)
          
-         if (not (fmt in self.fmt_url_map)):
-            self.log(20, 'Caching direct url for new format {0:d} ({1}) parsed from html5-type markup.'.format(fmt, mt))
-            self.fmt_url_map[fmt] = m.groupdict()['url']
-         rv += 1
+         try:
+            html5_fmt_data = pca['html5_fmt_map']
+         except KeyError:
+            if (self._try_html5):
+               loglevel = 30
+            else:
+               loglevel = 20
+            self.log(loglevel, 'No html5 data present.'.format(line))
+            continue
+         
+         for fmt_dict in html5_fmt_data:
+            try:
+               fmt = int(fmt_dict['itag'])
+               url = fmt_dict['url']
+            except (KeyError, ValueError):
+               self.log(30, 'Failed to process html5 fmt dict: {!r}.'.format(fmt_dict))
+               continue
+            
+            try:
+               quality = fmt_dict['quality']
+            except KeyError:
+               quality = None
+            
+            try:
+               type_ = fmt_dict['type']
+            except KeyError:
+               type_ = None
+            
+            if not (fmt in self.fmt_url_map):
+               self.log(20, 'Caching direct url for new format {0:d} ({1}) parsed from html5-type markup.'.format(fmt, type_))
+               self.fmt_url_map[fmt] = url
+               rv += 1
       
-      m = self.re_fmt_url_map_markup.search(markup)
-      if (m is None):
+      fv_m = self.re_fmt_flashvars.search(markup)
+      if (fv_m is None):
         return rv
-      umm = m.groupdict()['umm']
-      umm_unescaped = escape_decode(umm)
       
-      for (re, _map, log) in ((self.re_fmt_url_map, self.fmt_url_map, True), (self.re_fmt_stream_map, self._fmt_stream_map, False)):
-         m2 = re.search(umm_unescaped)
-         if (m2 is None):
-            continue
-         ms_raw = m2.groupdict()['ms']
-         ms = unquote(ms_raw)
+      fv_text = xml_unescape(fv_m.groupdict()['text'])
+      flashvars = dict(e.split('=', 1) for e in fv_text.split('&'))
+      
+      for (text, _map, log) in (
+          (flashvars['fmt_url_map'], self.fmt_url_map, True),
+          (flashvars['fmt_stream_map'], self._fmt_stream_map, False)):
+         ms = unquote(text)
          rv += self.fmt_map_update(ms, _map, log)
       return rv
    
