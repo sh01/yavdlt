@@ -1198,9 +1198,9 @@ def arg2vidset(s, fallback=True):
    log = logging.getLogger('arg2vidset').log
    res = (
       re.compile('^(?P<vid>[A-Za-z0-9_-]{11})$'),
-      re.compile('^http://(?:www.)?youtube(?:-nocookie)?\.[^\./]+\.?/+watch?.*v=(?P<vid>[A-Za-z0-9_-]{11})(?:$|[^A-Za-z0-9_-])'),
-      re.compile('^http://(?:www.)?youtube(?:-nocookie)?\.[^\./]+\.?/+v/+(?P<vid>[A-Za-z0-9_-]{11})(?:$|[^A-Za-z0-9_-])'),
-      re.compile('^http://youtu.be/(?P<vid>[A-Za-z0-9_-]{11})($|[^A-Za-z0-9_-])')
+      re.compile('^https?://(?:www.)?youtube(?:-nocookie)?\.[^\./]+\.?/+watch?.*v=(?P<vid>[A-Za-z0-9_-]{11})(?:$|[^A-Za-z0-9_-])'),
+      re.compile('^https?://(?:www.)?youtube(?:-nocookie)?\.[^\./]+\.?/+v/+(?P<vid>[A-Za-z0-9_-]{11})(?:$|[^A-Za-z0-9_-])'),
+      re.compile('^https?://youtu.be/(?P<vid>[A-Za-z0-9_-]{11})($|[^A-Za-z0-9_-])')
    )
    
    for rx in res:
@@ -1220,8 +1220,8 @@ def arg2vidset(s, fallback=True):
 
 
 _re_embedded_split = re.compile(b'<object')
-_re_embedded_url1 = re.compile(b'<param name="movie" value="(?P<yt_url>http://[^"/]*youtube(?:-nocookie)?\.[^"/]+/v/[^"]+)"')
-_re_embedded_url2 = re.compile(b'<embed src="(?P<yt_url>http://[^"/]*youtube(?:-nocookie)?\.[^"/]+/v/[^"]+)"')
+_re_embedded_url1 = re.compile(b'<param name="movie" value="(?P<yt_url>https?://[^"/]*youtube(?:-nocookie)?\.[^"/]+/v/[^"]+)"')
+_re_embedded_url2 = re.compile(b'<embed src="(?P<yt_url>https?://[^"/]*youtube(?:-nocookie)?\.[^"/]+/v/[^"]+)"')
 
 def get_embedded_yturls(url):
    import logging
