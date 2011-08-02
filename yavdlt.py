@@ -1080,12 +1080,11 @@ class YTVideoRef:
       fv_text = xml_unescape(fv_m.groupdict()['text'])
       flashvars = dict(e.split('=', 1) for e in fv_text.split('&'))
       
-      for (text, _map, log) in (
-          (flashvars['fmt_url_map'], self.fmt_url_map, True),
-          (flashvars['fmt_stream_map'], self._fmt_stream_map, False)):
-         ms = unquote(text)
-         rv += self.fmt_map_update(ms, _map, log)
-      return rv
+      rv += self.fmt_map_update(unquote(flashvars['fmt_url_map']), self.fmt_url_map, True)
+      try:
+         rv += self.fmt_map_update(unquote(flashvars['fmt_stream_map']), self.fmt_url_map, False)
+      except KeyError:
+         pass
    
    def _pick_video(self, cache_ok=True):
       from urllib.parse import splittype, splithost
