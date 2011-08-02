@@ -678,8 +678,9 @@ class YTVideoRef:
       
       ums = vi['fmt_url_map']
       self.fmt_map_update(ums, self.fmt_url_map)
-      sms = vi['fmt_stream_map']
-      self.fmt_map_update(sms, self._fmt_stream_map, False)
+      # Broken after format change; ignore for now.
+      #sms = vi['fmt_stream_map']
+      #self.fmt_map_update(sms, self._fmt_stream_map, False)
       
       self.got_video_info = True
    
