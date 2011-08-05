@@ -545,10 +545,8 @@ class YTVideoRef:
    re_fmt_playerconfig = re.compile("""'PLAYER_CONFIG' *: *(?P<text>[^ ].*"})[^"]*$""")
    re_fmt_url_map_markup = re.compile(r'\? "(?P<umm>.*?fmt_url_map=.*?>)"')
    re_fmt_url_html5 = re.compile('videoPlayer.setAvailableFormat\("(?P<url>[^"]+)", "(?P<mime_type>video/[^"/ \t;]*);[^"]*", "[^"]*", "(?P<fmt>[0-9]+)"\);')
-   re_fmt_url_map = re.compile('fmt_url_map=(?P<ms>[^"&]+)&')
-   re_fmt_stream_map = re.compile('fmt_stream_map=(?P<ms>[^"&]+)&')
-   
-   re_fmt_flashvars = re.compile('flashvars="(?P<text>[^"]*)"', re.DOTALL)
+   re_stream_url = re.compile('^url=(?P<url>.*)&(type=[^&]*|codecs=[^&]*)&itag=(?P<fmt>[0-9]*)')
+   re_fmt_stream_map = re.compile('url_encoded_fmt_stream_map=(?P<ms>[^"&]+)&')
    
    URL_FMT_WATCH = 'http://www.youtube.com/watch?v={0}&has_verified=1'
    URL_FMT_GETVIDEOINFO = 'http://www.youtube.com/get_video_info?video_id={0}'
@@ -579,8 +577,7 @@ class YTVideoRef:
       self._tried_md_fetch = False
       self.vid = vid
       self._mime_type = None
-      self.fmt_url_map = {}
-      self._fmt_stream_map = {}
+      self.fmt_stream_map = {}
       self.got_video_info = False
       self.title = None
       self.fpl = format_pref_list
@@ -631,16 +628,7 @@ class YTVideoRef:
       return bool(self.fpl)
    
    def _get_stream_urls(self):
-      rv = {}
-      for (key, val) in self._fmt_stream_map.items():
-         val_s = val.split('|')
-         if ((len(val_s) == 3) and (val_s[0].startswith('http://'))):
-            rv[key] = val_s[0]
-         elif ((len(val_s) == 2) and (val_s[1].startswith('rtmpe://'))):
-            rv[key] = val_s[1]
-         else:
-            raise ValueError('Unknown stream url format {0!a}.'.format(val))
-      return rv
+      return self.fmt_stream_map
    
    def url_get_annots(self):
       return 'http://www.google.com/reviews/y/read2?video_id={0}'.format(self.vid)
@@ -676,11 +664,8 @@ class YTVideoRef:
       
       self.title = vi['title']
       
-      ums = vi['fmt_url_map']
-      self.fmt_map_update(ums, self.fmt_url_map)
-      # Broken after format change; ignore for now.
-      #sms = vi['fmt_stream_map']
-      #self.fmt_map_update(sms, self._fmt_stream_map, False)
+      ums = vi['url_encoded_fmt_stream_map']
+      self.fmt_map_update(ums)
       
       self.got_video_info = True
    
@@ -994,16 +979,25 @@ class YTVideoRef:
       content = self.urlopen(url).read()
       self.fmt_maps_update_markup(content)
    
-   def fmt_map_update(self, ums, _map, log=True):
+   def fmt_map_update(self, ums, log=True):
+      from urllib.parse import unquote_plus
+      _map = self.fmt_stream_map
       ums_split = ums.split(',')
       
       rv = 0
       for umsf in ums_split:
-         (fmt_str, url) = umsf.split('|',1)
-         fmt = int(fmt_str)
+         umsf_decoded = unquote_plus(umsf)
+         m = self.re_stream_url.search(umsf_decoded)
+         if (m is None):
+            self.log(30, 'Stream URL spec {!r} has unknown format, ignoring.'.format(umsf_decoded))
+            continue
          
-         if (log and (not (fmt in self.fmt_url_map))):
-            self.log(20, 'Caching direct url for new format {0:d}.'.format(fmt))
+         url = m.groupdict()['url']
+         fmt = int(m.groupdict()['fmt'])
+         
+         if (not (fmt in _map)):
+            if (log):
+               self.log(20, 'Caching direct url for new format {0:d}.'.format(fmt))
             _map[fmt] = url
          rv += 1
       return rv
@@ -1016,8 +1010,8 @@ class YTVideoRef:
          markup = markup.decode('utf-8','surrogateescape')
       
       rv = 0
-      # HTML5 parsing
       for line in markup.split('\n'):
+         # Flash content parsing.
          m = self.re_fmt_playerconfig.search(line)
          if (m is None):
             continue
@@ -1029,17 +1023,9 @@ class YTVideoRef:
             self.log(30, 'Unable to decode PLAYER_CONFIG dict {!r}:'.format(player_config_text), exc_info=True)
             continue
          
-         for (key, _map, log) in (
-            ('fmt_url_map', self.fmt_url_map, True),
-            ('fmt_stream_map', self._fmt_stream_map, False)):
-            try:
-               map_data = pca[key]
-            except KeyError:
-               self.log(30, 'Unable to extract {!r} element from PCA dict {!r}. Skipping.'.format(
-                   key, pca))
-               continue
-            rv += self.fmt_map_update(map_data, _map, log)
+         self.fmt_map_update(pca['url_encoded_fmt_stream_map'])
          
+         # HTML5 content extraction.
          try:
             html5_fmt_data = pca['html5_fmt_map']
          except KeyError:
@@ -1072,19 +1058,7 @@ class YTVideoRef:
                self.log(20, 'Caching direct url for new format {0:d} ({1}) parsed from html5-type markup.'.format(fmt, type_))
                self.fmt_url_map[fmt] = url
                rv += 1
-      
-      fv_m = self.re_fmt_flashvars.search(markup)
-      if (fv_m is None):
-        return rv
-      
-      fv_text = xml_unescape(fv_m.groupdict()['text'])
-      flashvars = dict(e.split('=', 1) for e in fv_text.split('&'))
-      
-      rv += self.fmt_map_update(unquote(flashvars['fmt_url_map']), self.fmt_url_map, True)
-      try:
-         rv += self.fmt_map_update(unquote(flashvars['fmt_stream_map']), self.fmt_url_map, False)
-      except KeyError:
-         pass
+      return rv
    
    def _pick_video(self, cache_ok=True):
       from urllib.parse import splittype, splithost
@@ -1099,7 +1073,7 @@ class YTVideoRef:
          if (fmt == FMT_DEFAULT):
             continue
          try:
-            url_r = self.fmt_url_map[fmt]
+            url_r = self.fmt_stream_map[fmt]
          except KeyError:
             self.log(20, 'No url for fmt {0} available.'.format(fmt))
             continue
@@ -1462,9 +1436,6 @@ def main():
          ref.fetch_data(dtypemask)
       except YTError:
          log(30, 'Failed to retrieve video {0!a}:'.format(vid), exc_info=True)
-         stream_urls = list(ref._get_stream_urls().values())
-         if ((not ref.fmt_url_map) and stream_urls):
-            log(20, "We did manage to retrieve some stream urls we don't know how to use: {0!a}.".format(stream_urls))
          vids_failed.append(vid)
          continue
    
