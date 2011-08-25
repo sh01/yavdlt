@@ -1023,7 +1023,7 @@ class YTVideoRef:
             self.log(30, 'Unable to decode PLAYER_CONFIG dict {!r}:'.format(player_config_text), exc_info=True)
             continue
          
-         self.fmt_map_update(pca['url_encoded_fmt_stream_map'])
+         rv += self.fmt_map_update(pca['url_encoded_fmt_stream_map'])
          
          # HTML5 content extraction.
          try:
@@ -1099,8 +1099,9 @@ class YTVideoRef:
          
          if (rc == 200):
             mime_type = response.getheader('content-type', None)
-            content_length = int(response.getheader('content-length', None))
+            content_length = response.getheader('content-length', None)
             if not (content_length is None):
+               content_length = int(content_length)
                self.log(20, 'Fmt {0} is good ... using that.'.format(fmt))
                self._mime_type = mime_type
                self._fmt = fmt
