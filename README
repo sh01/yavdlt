@@ -81,15 +81,3 @@ Please send any bug reports, feature requests, comments, etc. to
 sebastian_hagen@memespace.net.
 Using a subject line beginning with 'YAVDLT: ' will increase the probability
 that your mail doesn't accidentally get classified as spam.
-
-
-==== Project status ====
-Development of yavdlt by Sebastian Hagen has been suspended as of 2011-01-21.
-The project at this time is very stable, and close to feature-complete; there
-have been no significant changes for several months prior to this freeze.
-
-Resumption of development at a later date is likely but not guaranteed. In the
-meantime, bug reports sent to the above address will be filed to be processed
-if and when development resumes.
-
-Forks are (as always) welcome.
