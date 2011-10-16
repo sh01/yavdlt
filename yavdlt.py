@@ -542,7 +542,7 @@ class YTVideoRef:
    re_title = re.compile(b'<meta name="title" content="(?P<text>[^"]*?)">')
    re_err = re.compile(b'<div[^>]* id="error-box"[^>]*>.*?<div[^>]* class="yt-alert-content"[^>]*>(?P<text>.*?)</div>', re.DOTALL)
    re_err_age = re.compile(b'<div id="verify-age-details">(?P<text>.*?)</div>', re.DOTALL)
-   re_fmt_playerconfig = re.compile("""'PLAYER_CONFIG' *: *(?P<text>[^ ].*"})[^"]*$""")
+   re_fmt_playerconfig = re.compile("""'PLAYER_CONFIG' *: *(?P<text>[^ ].*})[^"]*$""")
    re_fmt_url_map_markup = re.compile(r'\? "(?P<umm>.*?fmt_url_map=.*?>)"')
    re_fmt_url_html5 = re.compile('videoPlayer.setAvailableFormat\("(?P<url>[^"]+)", "(?P<mime_type>video/[^"/ \t;]*);[^"]*", "[^"]*", "(?P<fmt>[0-9]+)"\);')
    re_stream_url = re.compile('^url=(?P<url>.*)&(type=[^&]*|codecs=[^&]*)&itag=(?P<fmt>[0-9]*)')
