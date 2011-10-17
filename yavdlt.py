@@ -1139,7 +1139,7 @@ class YTPlayListRef:
       vids_set = set()
       vids_l = []
       
-      for node in reversed(link_nodes):
+      for node in link_nodes:
          try:
             tt = node.attributes['type'].value
          except KeyError:
