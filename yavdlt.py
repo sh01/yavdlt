@@ -1120,7 +1120,8 @@ class YTPlayListRef:
    logger = logging.getLogger('YTPlaylistRef')
    log = logger.log
    
-   pl_base_url = 'http://gdata.youtube.com/feeds/api/playlists/{0}?v=2'
+   # TODO: Use start-index=[0-9]+ parameter to retrieve arbitrary long lists in full.
+   pl_base_url = 'http://gdata.youtube.com/feeds/api/playlists/{0}?v=2&max-results=50'
    def __init__(self, plid):
       self.plid = plid
       self.vids = []
