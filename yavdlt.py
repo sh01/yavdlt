@@ -681,7 +681,7 @@ class YTVideoRef:
          # It's 'http://www.youtube.com/annotations' at the time of writing, but this is likely more compatible.
          self._annotation_base_url = vi['iv_storage_server']
       except KeyError:
-         self.log(30, 'No annotation URL found in video info dict.')
+         self.log(20, 'No annotation URL found in video info dict.')
          self._annotation_base_url = None
       
       return rv
@@ -953,7 +953,7 @@ class YTVideoRef:
       url = self.url_get_annots()
       if (url is None):
          self.log(10, 'Skipping annotation retrieval (no URL).')
-         return
+         return (None, None, None)
       self.log(20, 'Fetching annotations from {0!a}.'.format(url))
       req = self.urlopen(url)
       content = req.read()
