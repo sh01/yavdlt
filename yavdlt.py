@@ -575,6 +575,7 @@ class YTVideoRef:
    
    def __init__(self, vid, format_pref_list, dl_path_tmp, dl_path_final, make_mkv, try_html5=False, drop_tt=''):
       self._tried_md_fetch = False
+      self._annotation_base_url = None
       self.vid = vid
       self._mime_type = None
       self.fmt_stream_map = {}
@@ -631,7 +632,11 @@ class YTVideoRef:
       return self.fmt_stream_map
    
    def url_get_annots(self):
-      return 'http://www.google.com/reviews/y/read2?video_id={0}'.format(self.vid)
+      # Stored in 'iv_storage_server' PLAYER_CONFIG variable on watch page.
+      base_url = self._annotation_base_url
+      if (base_url is None):
+         return None
+      return '{0}/read2?video_id={1}'.format(base_url, self.vid)
    
    def get_metadata_blocking(self):
       self.log(20, 'Acquiring YT metadata.')
@@ -657,21 +662,41 @@ class YTVideoRef:
          return (key, unquote_plus(val))
       
       vi = dict(uqv(splitvalue(cfrag)) for cfrag in content.split('&'))
+      #import pprint; pprint.pprint(vi)
       
       if (vi['status'] != 'ok'):
          self.log(20, 'YT Refuses to deliver video info: {0!a}'.format(vi))
          raise YTError('YT Refuses to deliver video info: {0!a}'.format(vi))
       
       self.title = vi['title']
-      
-      ums = vi['url_encoded_fmt_stream_map']
-      self.fmt_map_update(ums)
+      self._process_vi_dict(vi)
       
       self.got_video_info = True
    
+   def _process_vi_dict(self, vi):
+      ums = vi['url_encoded_fmt_stream_map']
+      rv = self.fmt_map_update(ums)
+      
+      try:
+         # It's 'http://www.youtube.com/annotations' at the time of writing, but this is likely more compatible.
+         self._annotation_base_url = vi['iv_storage_server']
+      except KeyError:
+         self.log(30, 'No annotation URL found in video info dict.')
+         self._annotation_base_url = None
+      
+      return rv
+   
    def _get_metadata_watch(self, html5):
       url = self.URL_FMT_WATCH.format(self.vid)
-      content = self.urlopen(url, html5=html5).read()
+      
+      try:
+         uo = self.urlopen(url, html5=html5)
+      except urllib.error.HTTPError as exc:
+         self.log(30, 'HTTP request for {!a} returned {}.'.format(url, exc.code))
+         # TODO: Attempt to parse error message from 404 body (exc.read())?
+         raise YTError('YT refuses to deliver video urls (404).') from exc
+      else:
+         content = uo.read()
       
       fmt_url_count = self.fmt_maps_update_markup(content)
       if (fmt_url_count == 0):
@@ -926,6 +951,9 @@ class YTVideoRef:
    
    def fetch_annotations(self):
       url = self.url_get_annots()
+      if (url is None):
+         self.log(10, 'Skipping annotation retrieval (no URL).')
+         return
       self.log(20, 'Fetching annotations from {0!a}.'.format(url))
       req = self.urlopen(url)
       content = req.read()
@@ -1023,7 +1051,7 @@ class YTVideoRef:
             self.log(30, 'Unable to decode PLAYER_CONFIG dict {!r}:'.format(player_config_text), exc_info=True)
             continue
          
-         rv += self.fmt_map_update(pca['url_encoded_fmt_stream_map'])
+         rv += self._process_vi_dict(pca)
          
          # HTML5 content extraction.
          try:
