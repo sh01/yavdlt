@@ -636,7 +636,7 @@ class YTVideoRef:
       base_url = self._annotation_base_url
       if (base_url is None):
          return None
-      return '{0}/read2?video_id={1}'.format(base_url, self.vid)
+      return '{0}read2?video_id={1}'.format(base_url, self.vid)
    
    def get_metadata_blocking(self):
       self.log(20, 'Acquiring YT metadata.')
@@ -680,6 +680,8 @@ class YTVideoRef:
       try:
          # It's 'http://www.youtube.com/annotations' at the time of writing, but this is likely more compatible.
          self._annotation_base_url = vi['iv_storage_server']
+         if (not self._annotation_base_url.endswith('/')):
+            self._annotation_base_url += '/'
       except KeyError:
          self.log(20, 'No annotation URL found in video info dict.')
          self._annotation_base_url = None
