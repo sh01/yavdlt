@@ -1206,7 +1206,8 @@ def arg2vidset(s, fallback=True):
       re.compile('^(?P<vid>[A-Za-z0-9_-]{11})$'),
       re.compile('^https?://(?:www.)?youtube(?:-nocookie)?\.[^\./]+\.?/+watch?.*v=(?P<vid>[A-Za-z0-9_-]{11})(?:$|[^A-Za-z0-9_-])'),
       re.compile('^https?://(?:www.)?youtube(?:-nocookie)?\.[^\./]+\.?/+v/+(?P<vid>[A-Za-z0-9_-]{11})(?:$|[^A-Za-z0-9_-])'),
-      re.compile('^https?://youtu.be/(?P<vid>[A-Za-z0-9_-]{11})($|[^A-Za-z0-9_-])')
+      re.compile('^https?://youtu.be/(?P<vid>[A-Za-z0-9_-]{11})($|[^A-Za-z0-9_-])'),
+      re.compile('^https?://(?:www.)?youtube.[^\./]+\.?/embed/(?P<vid>[A-Za-z0-9_-]{11})')
    )
    
    for rx in res:
@@ -1225,9 +1226,13 @@ def arg2vidset(s, fallback=True):
    raise ValueError('Unable to get video id from string {0!a}.'.format(s))
 
 
-_re_embedded_split = re.compile(b'<object')
-_re_embedded_url1 = re.compile(b'<param name="movie" value="(?P<yt_url>https?://[^"/]*youtube(?:-nocookie)?\.[^"/]+/v/[^"]+)"')
-_re_embedded_url2 = re.compile(b'<embed src="(?P<yt_url>https?://[^"/]*youtube(?:-nocookie)?\.[^"/]+/v/[^"]+)"')
+_re_embedded_split = re.compile(b'<object|<iframe')
+_re_embedded_urls = [
+  re.compile(b'<param name="movie" value="(?P<yt_url>https?://[^"/]*youtube(?:-nocookie)?\.[^"/]+/v/[^"]+)"'),
+  re.compile(b'<embed src="(?P<yt_url>https?://[^"/]*youtube(?:-nocookie)?\.[^"/]+/v/[^"]+)"'),
+  re.compile(b'src="(?P<yt_url>https?://[^"/]*youtube(?:-nocookie)?\.[^"/]+/embed/XF7b_MNEIAg")[^<>]*>')
+]
+
 
 def get_embedded_yturls(url):
    import logging
@@ -1241,12 +1246,10 @@ def get_embedded_yturls(url):
    html_fragments = _re_embedded_split.split(html)
    urls = []
    for fragment in html_fragments:
-      m1 = _re_embedded_url1.search(fragment)
-      m2 = _re_embedded_url2.search(fragment)
-      if not (m1 is None):
-         urls.append(m1.groupdict()['yt_url'].decode('ascii'))
-      if not (m2 is None):
-         urls.append(m2.groupdict()['yt_url'].decode('ascii'))
+      for _re in _re_embedded_urls:
+         m = _re.search(fragment)
+         if not (m is None):
+            urls.append(m.groupdict()['yt_url'].decode('ascii'))
    
    #urls = [xml_unescape(u) for u in urls]
    return set(urls)
