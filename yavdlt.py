@@ -538,6 +538,20 @@ class YTimedTextList:
       return rv
 
 
+def _split_yt_dictstring(dstr):
+   from urllib.parse import splitvalue, unquote, unquote_plus
+
+   def uqv(d):
+      (key, val) = d
+      return (key, unquote_plus(val))
+
+   def uqv(d):
+      (key, val) = d
+      return (key, unquote_plus(val))
+      
+   return dict(uqv(splitvalue(cfrag)) for cfrag in dstr.split('&'))
+
+
 class YTVideoRef:
    re_title = re.compile(b'<meta name="title" content="(?P<text>[^"]*?)">')
    re_err = re.compile(b'<div[^>]* id="error-box"[^>]*>.*?<div[^>]* class="yt-alert-content"[^>]*>(?P<text>.*?)</div>', re.DOTALL)
@@ -545,7 +559,6 @@ class YTVideoRef:
    re_fmt_playerconfig = re.compile("""'PLAYER_CONFIG' *: *(?P<text>[^ ].*})[^"]*$""")
    re_fmt_url_map_markup = re.compile(r'\? "(?P<umm>.*?fmt_url_map=.*?>)"')
    re_fmt_url_html5 = re.compile('videoPlayer.setAvailableFormat\("(?P<url>[^"]+)", "(?P<mime_type>video/[^"/ \t;]*);[^"]*", "[^"]*", "(?P<fmt>[0-9]+)"\);')
-   re_stream_url = re.compile('^url=(?P<url>.*)&(type=[^&]*|codecs=[^&]*)&itag=(?P<fmt>[0-9]*)')
    re_fmt_stream_map = re.compile('url_encoded_fmt_stream_map=(?P<ms>[^"&]+)&')
    
    URL_FMT_WATCH = 'http://www.youtube.com/watch?v={0}&has_verified=1'
@@ -653,15 +666,10 @@ class YTVideoRef:
          self._get_metadata_watch(html5=self._try_html5)
    
    def _get_metadata_getvideoinfo(self):
-      from urllib.parse import splitvalue, unquote, unquote_plus
-      
       url = self.URL_FMT_GETVIDEOINFO.format(self.vid)
       content = self.urlopen(url).read().decode('ascii')
-      def uqv(d):
-         (key, val) = d
-         return (key, unquote_plus(val))
       
-      vi = dict(uqv(splitvalue(cfrag)) for cfrag in content.split('&'))
+      vi = _split_yt_dictstring(content)
       #import pprint; pprint.pprint(vi)
       
       if (vi['status'] != 'ok'):
@@ -1015,16 +1023,17 @@ class YTVideoRef:
       ums_split = ums.split(',')
       
       rv = 0
+      
       for umsf in ums_split:
-         umsf_decoded = unquote_plus(umsf)
-         m = self.re_stream_url.search(umsf_decoded)
-         if (m is None):
+         umsf_data = _split_yt_dictstring(umsf)
+         
+         try:
+            url = umsf_data['url']
+            fmt = int(umsf_data['itag'], 10)
+         except (KeyError, ValueError):
             self.log(30, 'Stream URL spec {!r} has unknown format, ignoring.'.format(umsf_decoded))
             continue
-         
-         url = m.groupdict()['url']
-         fmt = int(m.groupdict()['fmt'])
-         
+                  
          if (not (fmt in _map)):
             if (log):
                self.log(20, 'Caching direct url for new format {0:d}.'.format(fmt))
