@@ -1004,7 +1004,7 @@ class YTVideoRef:
             lc = ''
          lc = lc.replace('/', '').replace('\x00','')
          name = subset.name.replace('/', '').replace('\x00','')
-         fn = self._choose_fn('{0}_{1}.ass'.format(lc, name))
+         fn = self._choose_final_fn('{0}_{1}.ass'.format(lc, name))
          self.log(20, 'Writing timedtext data for name {0!a}, lc {1} to {2!a}.'.format(subset.name, subset.lc, fn))
          if (isinstance(fn, str)):
             fn = fn.encode('utf-8')
