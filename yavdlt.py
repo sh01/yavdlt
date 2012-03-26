@@ -23,7 +23,6 @@ if (sys.version_info[0] < 3):
 import collections
 from collections import deque, OrderedDict
 import html.parser
-import http.client
 import http.cookiejar
 import logging
 import os
@@ -586,7 +585,7 @@ class YTVideoRef:
       'v': ('TRACKTYPE_VIDEO', 'video'),  
    }
    
-   def __init__(self, vid, format_pref_list, dl_path_tmp, dl_path_final, make_mkv, try_html5=False, drop_tt=''):
+   def __init__(self, vid, format_pref_list, dl_path_tmp, dl_path_final, make_mkv, try_html5=False, drop_tt='', uhl=()):
       self._tried_md_fetch = False
       self._annotation_base_url = None
       self.vid = vid
@@ -603,7 +602,11 @@ class YTVideoRef:
       self._cookiejar = http.cookiejar.CookieJar()
       self._cookiejar.set_policy(http.cookiejar.DefaultCookiePolicy(allowed_domains=[]))
       self._try_html5 = try_html5
-      self._url_opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self._cookiejar))
+      
+      uhl = list(uhl)
+      uhl.append(urllib.request.HTTPCookieProcessor(self._cookiejar))
+      
+      self._url_opener = urllib.request.build_opener(*uhl)
       for tt in drop_tt:
          if not (tt in self._track_type_map):
             raise ValueError('Unknown track type {!r}.'.format(tt))
@@ -1101,6 +1104,7 @@ class YTVideoRef:
    
    def _pick_video(self, cache_ok=True):
       from urllib.parse import splittype, splithost
+      from urllib.error import HTTPError
       
       if (cache_ok and self._content_direct_url):
          return self._content_direct_url
@@ -1118,23 +1122,15 @@ class YTVideoRef:
             continue
          
          url = self.mangle_yt_url(url_r)
-         rc = 301
          
-         while (301 <= rc <= 303):
-            (type_, dp) = splittype(url)
-            (host, path) = splithost(dp)
-            conn = http.client.HTTPConnection(host)
-            conn.request('HEAD',path)
-            try:
-               response = conn.getresponse()
-            except http.client.BadStatusLine:
-               # Happens for some responses ... don't know why, don't really
-               # care.
-               rc = None
-               break
-            rc = response.status
-            if (301 <= rc <= 303):
-               url = response.getheader('location')
+         try:
+            response = self.urlopen(url)
+         except URLError as exc:
+            self.log(20, 'Tried to get video in fmt {0} and failed (urlopen exc {1!a}.)'.format(fmt, exc))
+            continue
+         
+         rc = response.getcode()
+         url = response.geturl()
          
          if (rc == 200):
             mime_type = response.getheader('content-type', None)
@@ -1290,6 +1286,7 @@ class Config:
    drop_tt = ''
    
    def __init__(self):
+      self._urllib_handler_lists = {}
       self._url_manglers = {}
       self._fmt_preflists = {}
       self._default_fpl = (22, 35, 34, 18, 5, FMT_DEFAULT)
@@ -1299,11 +1296,18 @@ class Config:
       self.fpl = None
       self.fmt = None
       self.url_mangler = None
+      self.urllib_handler_list = None
       self.playlist = None
 
    def url_mapper_reg(self, name):
       def r(val):
          self._url_manglers[name] = val
+         return val
+      return r
+   
+   def urllib_handler_list_reg(self, name):
+      def r(val):
+         self._urllib_handler_lists[name] = val
          return val
       return r
    
@@ -1369,6 +1373,7 @@ class Config:
       oa('--playlist', help='Parse (additional) video ids from specified playlist', metavar='PLAYLIST_ID')
       oa('--list-url-manglers', dest='list_url_manglers', action='store_true', help='Print lists of known URL manglers and exit')
       oa('--url-mangler', '-u', dest='url_mangler', metavar='UMNAME', help='Fetch metadata pages through specified HTTP gateway')
+      oa('--urllib-handler-list', '-H', dest='urllib_handler_list', metavar='UHLNAME', help='Use specified urllib handler list for HTTP fetches.')
       oa('--mkv', '-m', dest='make_mkv', action='store_true', help='Mux downloaded data (AV+Subs) into MKV file.')
       oa('--nomkv', dest='make_mkv', action='store_false', help="Don't mux downloaded data (AV+Subs) into MKV file.")
       oa('--html5', dest='try_html5', action='store_true', help="Opt into html5 experiment for watch page retrieval (required for webm downloads)")
@@ -1392,6 +1397,17 @@ class Config:
       except KeyError as exc:
          raise Exception('Unknown url mangler {0!a}; available ums are {1}.'.format(self.url_mangler,
             list(self._url_manglers.keys()))) from exc
+      return rv
+   
+   def _get_uhl(self):
+      if (self.urllib_handler_list is None):
+         return ()
+      
+      try:
+         rv = self._urllib_handler_lists[self.urllib_handler_list]
+      except KeyError as exc:
+         raise Exception('Unknown UHL {0!a}; available UHLs are {1}.'.format(self.urllib_handler_list,
+            list(self._urllib_handler_lists.keys()))) from exc
       return rv
    
    def _get_vids(self):
@@ -1459,6 +1475,7 @@ def main():
          raise ValueError('Unknown data type {0!a}.'.format(c))
    
    um = conf._get_um()
+   uhl = conf._get_uhl()
    vids = conf._get_vids()
    
    log(20, 'Final vid set: {0}'.format(vids))
@@ -1470,7 +1487,7 @@ def main():
 
    for vid in vids:
       log(20, 'Fetching data for video with id {0!a}.'.format(vid))
-      ref = YTVideoRef(vid, fpl, conf.dl_path_temp, conf.dl_path_final, conf.make_mkv, conf.try_html5, conf.drop_tt)
+      ref = YTVideoRef(vid, fpl, conf.dl_path_temp, conf.dl_path_final, conf.make_mkv, conf.try_html5, conf.drop_tt, uhl)
       
       if not (um is None):
          ref.mangle_yt_url = um
