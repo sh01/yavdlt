@@ -31,8 +31,6 @@ import urllib.request
 import re
 import xml.dom.minidom
 
-from io import BytesIO
-
 # ---------------------------------------------------------------- General helper functions
 
 xml_unescape = html.parser.HTMLParser().unescape
@@ -40,6 +38,28 @@ xml_unescape = html.parser.HTMLParser().unescape
 def escape_decode(s):
    from codecs import escape_decode
    return escape_decode(s.encode('utf-8'))[0].decode('utf-8')
+
+def get_http_encoding(req, default_encoding):
+   ct = req.getheader('Content-Type')
+   if (ct is None):
+      return default_encoding
+   
+   ct_map = {}
+   for elem in ct.split(';'):
+      if not ('=' in elem):
+         continue
+      (key, val) = elem.strip().split('=', 1)
+      ct_map[key] = val
+   
+   try:
+      rv = ct_map['charset']
+   except KeyError:
+      rv = default_encoding
+   return rv
+
+def req2str(req, default_encoding='utf-8'):
+   data = req.read()
+   return data.decode(get_http_encoding(req, default_encoding))
 
 # ---------------------------------------------------------------- ASS sub building code
 def make_ass_color(r,g,b,a):
@@ -963,15 +983,19 @@ class YTVideoRef:
       return f
    
    def fetch_annotations(self):
+      from io import StringIO
+      
       url = self.url_get_annots()
       if (url is None):
          self.log(10, 'Skipping annotation retrieval (no URL).')
          return (None, None, None)
       self.log(20, 'Fetching annotations from {0!a}.'.format(url))
       req = self.urlopen(url)
-      content = req.read()
+      
+      content = req2str(req)
       self.log(20, 'Parsing annotation data.')
-      annotations = parse_ytanno(BytesIO(content))
+      
+      annotations = parse_ytanno(StringIO(content))
       if (len(annotations) < 1):
          self.log(20, 'There are no annotations for this video.')
          return (None, None, None)
