@@ -349,7 +349,7 @@ class YTAnnotationAppearence(YTAnnotationAppearanceBase):
          except KeyError:
             kwargs[name] = None
             continue
-
+      
       return cls(**kwargs)
    
    def _get_num(self, name, base=None):
@@ -359,7 +359,9 @@ class YTAnnotationAppearence(YTAnnotationAppearanceBase):
       return val
    
    def get_style(self):
-      color1 = int(self.fgColor, 16)
+      rv = {}
+      if not (self.fgColor is None):
+         rv['color1'] = int(self.fgColor, 16)
       
       #color3 = int(self.borderColor, 16)
       #if not (color3 is None):
@@ -369,7 +371,7 @@ class YTAnnotationAppearence(YTAnnotationAppearanceBase):
       #if not (color_bg is None):
          #color_bg |= round(float(1-self._get_num('bgAlpha'))*255) << 24
       
-      return dict(color1=color1)
+      return rv
 
 
 YTAnnotationBase = collections.namedtuple('YTAnnotationBase', ('id','author','type','content', 'style', 'r1', 'r2', 'appearance', 'yt_spam_score', 'yt_spam_flag', 'urls'))
