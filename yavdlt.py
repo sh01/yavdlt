@@ -1261,7 +1261,7 @@ _re_embedded_split = re.compile(b'<object|<iframe')
 _re_embedded_urls = [
   re.compile(b'<param name="movie" value="(?P<yt_url>https?://[^"/]*youtube(?:-nocookie)?\.[^"/]+/v/[^"]+)"'),
   re.compile(b'<embed src="(?P<yt_url>https?://[^"/]*youtube(?:-nocookie)?\.[^"/]+/v/[^"]+)"'),
-  re.compile(b'src="(?P<yt_url>https?://[^"/]*youtube(?:-nocookie)?\.[^"/]+/embed/XF7b_MNEIAg")[^<>]*>')
+  re.compile(b'src="(?P<yt_url>https?://[^"/]*youtube(?:-nocookie)?\.[^"/]+/embed/[^"]+)"[^<>]*>')
 ]
 
 
