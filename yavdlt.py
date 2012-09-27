@@ -1059,6 +1059,7 @@ class YTVideoRef:
          try:
             url = umsf_data['url']
             fmt = int(umsf_data['itag'], 10)
+            sig = umsf_data['sig']
          except (KeyError, ValueError):
             self.log(30, 'Stream URL spec {!r} has unknown format, ignoring.'.format(umsf_decoded))
             continue
@@ -1066,7 +1067,7 @@ class YTVideoRef:
          if (not (fmt in _map)):
             if (log):
                self.log(20, 'Caching direct url for new format {0:d}.'.format(fmt))
-            _map[fmt] = url
+            _map[fmt] = '{}&signature={}'.format(url, sig)
          rv += 1
       return rv
    
