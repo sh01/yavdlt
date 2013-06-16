@@ -857,7 +857,8 @@ class FLVReader:
          
          hdr2_data = bytearray(8)
          # Stupid 24bit-sized ints, and middle-endian 32bit ints.
-         (ttype, hdr2_data[1:5], hdr2_data[6:9], hdr2_data[5:6]) = struct.unpack(self.bfmt_tag_header, header_data)
+         (ttype, hdr2_data[1:4], hdr2_data[5:8], hdr2_data[4]) = struct.unpack(self.bfmt_tag_header, header_data)
+
          (body_size, ts) = struct.unpack(self.bfmt_tag_header2, hdr2_data)
          tag_size = body_size + self.bfmt_tag_header_len
          
