@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Yet Another Video Download Tool: Download information from youtube
-# Copyright (C) 2009,2010  Sebastian Hagen
+# Copyright (C) 2009,2010,2013 Sebastian Hagen
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -1202,6 +1202,7 @@ class YTPlayListRef:
       vids_l = []
       
       for node in link_nodes:
+         node_vids = _linknode2vids(node)
          try:
             tt = node.attributes['type'].value
          except KeyError:
@@ -1229,6 +1230,98 @@ class YTPlayListRef:
       self.log(20, 'Got {0:d} playlist entries: {1!a}'.format(len(vids_l), vids_l))
       self.vids = vids_l
    
+
+class YTVideoInfo:
+  def __init__(self, vid, upload_ts):
+    self.vid = vid
+    self.upload_ts = upload_ts
+
+  def __eq__(self, other):
+    return (self.vid == other.vid)
+
+  def __ne__(self, other):
+    return not (self == other)
+
+  def __hash__(self):
+    return hash(self.vid)
+
+  def __repr__(self):
+    return '{}{}'.format(type(self).__name__, (self.vid, self.upload_ts))
+
+
+class YTUserRef:
+   logger = logging.getLogger('YTUserRef')
+   log = logger.log
+   
+   user_base_url = 'http://gdata.youtube.com/feeds/base/users/{}/uploads?alt=rss&v=2&max-results=50&start-index={}'
+   results_per_page = 50
+   def __init__(self, user_id):
+      self.user_id = user_id
+      self.vis = []
+
+   @staticmethod
+   def _pd2ts(pd):
+     import datetime, time
+     dt = datetime.datetime.strptime(pd, '%a, %d %b %Y %H:%M:%S %z')
+     return int(time.mktime(dt.utctimetuple()))
+
+   def get_vids(self):
+     rv = []
+     for vi in self.vis:
+        rv.append(vi.vid)
+     return rv
+
+   def __fetch_page(self, idx):
+      # Entry indexing is 1-based, for some reason.
+      u_url = self.user_base_url.format(self.user_id, 1+idx*self.results_per_page)
+      self.log(20, 'Retrieving user video list from {!a}.'.format(u_url))
+      req = urllib.request.urlopen(u_url)
+      u_markup = req.read()
+      self.log(20, 'Parsing video feed data.')
+      u_dom = xml.dom.minidom.parseString(u_markup)
+      item_nodes = u_dom.getElementsByTagName('item')
+
+      vis_set = set()
+      vis_l = []
+
+      for n_i in item_nodes:
+        (n_pd,) = n_i.getElementsByTagName('pubDate')
+        pts_text = n_pd.childNodes[0].nodeValue
+        pts = self._pd2ts(pts_text)
+
+        n_ls = n_i.getElementsByTagName('link')
+
+        if (len(n_ls) > 1):
+          self.log(30, 'Found more than one link element for item {!a}; ignoring all but the first.'.format(n_i))
+        elif (len(n_ls) < 1):
+          self.log(30, 'Found no link elements for item {!a}; ignoring.'.format(n_i))
+          continue
+
+        n_l = n_ls[0]
+        watch_url = n_l.childNodes[0].nodeValue
+        node_vids = arg2vidset(watch_url, fallback=False)
+
+        for vid in node_vids:
+           vi = YTVideoInfo(vid, pts)
+           if (vi in vis_set):
+              continue
+           vis_set.add(vi)
+           self.vis.append(vi)
+
+      return len(item_nodes)
+
+   def fetch_vids(self):
+      """Fetch video list and parse out vids."""
+      idx = 0
+      while (True):
+         c = self.__fetch_page(idx)
+         if (c != self.results_per_page):
+            break
+         idx += 1
+
+      self.log(20, 'Got {:d} user video list entries: {!a}'.format(len(self.vis), self.vis))
+      #raise
+
 
 # ---------------------------------------------------------------- Cmdline / config interpretation code
 def arg2vidset(s, fallback=True):
@@ -1325,6 +1418,7 @@ class Config:
       self.url_mangler = None
       self.urllib_handler_list = None
       self.playlist = None
+      self.user = None
 
    def url_mapper_reg(self, name):
       def r(val):
@@ -1398,6 +1492,7 @@ class Config:
       oa('--fmt', type=int, dest='fmt', help="YT format number to use.")
       oa('--fpl', help='Pick format preference list.')
       oa('--playlist', help='Parse (additional) video ids from specified playlist', metavar='PLAYLIST_ID')
+      oa('--user', help='Parse (additional) video ids from specified (space-separated) user video lists')
       oa('--list-url-manglers', dest='list_url_manglers', action='store_true', help='Print lists of known URL manglers and exit')
       oa('--url-mangler', '-u', dest='url_mangler', metavar='UMNAME', help='Fetch metadata pages through specified HTTP gateway')
       oa('--urllib-handler-list', '-H', dest='urllib_handler_list', metavar='UHLNAME', help='Use specified urllib handler list for HTTP fetches.')
@@ -1455,6 +1550,13 @@ class Config:
          plr = YTPlayListRef(self.playlist)
          plr.fetch_pl()
          update_vids(plr.vids)
+
+      if not (self.user is None):
+         users = self.user.split()
+         for user in users:
+           ur = YTUserRef(user)
+           ur.fetch_vids()
+           update_vids(ur.get_vids())
       return rv
    
    def _get_fpl(self):
