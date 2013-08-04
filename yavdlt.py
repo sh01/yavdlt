@@ -1202,7 +1202,6 @@ class YTPlayListRef:
       vids_l = []
       
       for node in link_nodes:
-         node_vids = _linknode2vids(node)
          try:
             tt = node.attributes['type'].value
          except KeyError:
