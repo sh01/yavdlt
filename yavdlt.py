@@ -27,6 +27,7 @@ import http.cookiejar
 import logging
 import os
 import os.path
+from urllib.error import URLError
 import urllib.request
 import re
 import xml.dom.minidom
