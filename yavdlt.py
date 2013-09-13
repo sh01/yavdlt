@@ -1061,7 +1061,7 @@ class YTVideoRef:
             fmt = int(umsf_data['itag'], 10)
             sig = umsf_data['sig']
          except (KeyError, ValueError):
-            self.log(30, 'Stream URL spec {!r} has unknown format, ignoring.'.format(umsf_decoded))
+            self.log(30, 'Stream URL spec {!r} has unknown format, ignoring.'.format(umsf_data))
             continue
                   
          if (not (fmt in _map)):
