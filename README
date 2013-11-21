@@ -4,9 +4,9 @@ YAVDLT.
 
 
 ==== Functionality ====
-TAVDLT is a cmdline program to download data from Youtube, and perform various
+YAVDLT is a cmdline program to download data from Youtube, and perform various
 kinds of post-processing on said data. One of its design goals is compatibility;
-if there's any decent way to get at a YT video, TAVDLT should allow you to do
+if there's any decent way to get at a YT video, YAVDLT should allow you to do
 it without unnecessary pain.
 In addition, YAVDLT has a larger feature set than most similar tools; currently,
 its feature set includes:
@@ -67,9 +67,9 @@ To mux downloaded AV and sub data into MKV files:
 Naturally, --help is also supported.
 
 ==== Config ====
-A config file isn't necessary for YTAVDLT use, but using one allows you to
+A config file isn't necessary for YAVDLT use, but using one allows you to
 influence its behaviour in more detail than cmdline switches.
-By default, YTAVDLT will look for its config file in ~/.yavdlt/config;
+By default, YAVDLT will look for its config file in ~/.yavdlt/config;
 this can be overridden using the --config switch.
 
 For details on configuration, see the example config file 'example.conf'
