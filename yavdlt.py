@@ -1089,11 +1089,10 @@ class YTVideoRef:
          player_config_text = m.groupdict()['text']
          try:
             pca = json.loads(player_config_text)['args']
+            rv += self._process_vi_dict(pca)
          except (ValueError, KeyError) as exc:
             self.log(30, 'Unable to decode PLAYER_CONFIG dict {!r}:'.format(player_config_text), exc_info=True)
             continue
-         
-         rv += self._process_vi_dict(pca)
          
          # HTML5 content extraction.
          try:
