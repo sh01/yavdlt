@@ -771,9 +771,10 @@ class YTVideoRef:
       return os.path.join(self.dlp_final, self._choose_fn(ext))
    
    def _move_video(self, fn_tmp):
+      import shutil
       fn_final = self._choose_final_fn()
       self.log(20, 'Moving finished movie file to {0!a}.'.format(fn_final))
-      os.rename(fn_tmp, fn_final)
+      shutil.move(fn_tmp, fn_final)
       return fn_final
    
    def _choose_fn(self, ext=None):
