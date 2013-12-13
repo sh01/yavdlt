@@ -610,7 +610,6 @@ class YTVideoRef:
    
    def __init__(self, vid, format_pref_list, dl_path_tmp, dl_path_final, make_mkv, try_html5=False, drop_tt='', uhl=()):
       self._tried_md_fetch = False
-      self._annotation_base_url = None
       self.vid = vid
       self._mime_type = None
       self.fmt_stream_map = {}
@@ -672,10 +671,7 @@ class YTVideoRef:
    
    def url_get_annots(self):
       # Stored in 'iv_storage_server' PLAYER_CONFIG variable on watch page.
-      base_url = self._annotation_base_url
-      if (base_url is None):
-         return None
-      return '{0}read2?video_id={1}'.format(base_url, self.vid)
+      return 'http://www.youtube.com/annotations_invideo?legacy=1&video_id={}'.format(self.vid)
    
    def get_metadata_blocking(self):
       self.log(20, 'Acquiring YT metadata.')
@@ -709,18 +705,7 @@ class YTVideoRef:
    
    def _process_vi_dict(self, vi):
       ums = vi['url_encoded_fmt_stream_map']
-      rv = self.fmt_map_update(ums)
-      
-      try:
-         # It's 'http://www.youtube.com/annotations' at the time of writing, but this is likely more compatible.
-         self._annotation_base_url = vi['iv_storage_server']
-         if (not self._annotation_base_url.endswith('/')):
-            self._annotation_base_url += '/'
-      except KeyError:
-         self.log(20, 'No annotation URL found in video info dict.')
-         self._annotation_base_url = None
-      
-      return rv
+      return self.fmt_map_update(ums)
    
    def _get_metadata_watch(self, html5):
       url = self.URL_FMT_WATCH.format(self.vid)
