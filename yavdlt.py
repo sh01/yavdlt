@@ -330,8 +330,21 @@ class YTAnnotationRR(YTAnnotationRRBase):
             if (strval == 'never'):
                nval = None
             else:
-               h,m,s = strval.split(':')
-               nval = int(h)*3600+int(m)*60+float(s)
+               s = strval
+               t = 0
+               f = 1
+               for i in range(3):
+                 if (not s):
+                   break
+                 if (':' in s):
+                   (s,tail) = s.rsplit(':',1)
+                 else:
+                   tail = s
+                   s = ''
+                 t += float(tail)*f
+                 f *= 60
+
+               nval = t
          else:
             nval = float(strval)
          kwargs[name] = nval
@@ -1046,7 +1059,6 @@ class YTVideoRef:
          try:
             url = umsf_data['url']
             fmt = int(umsf_data['itag'], 10)
-            sig = umsf_data['sig']
          except (KeyError, ValueError):
             self.log(30, 'Stream URL spec {!r} has unknown format, ignoring.'.format(umsf_data))
             continue
@@ -1054,7 +1066,7 @@ class YTVideoRef:
          if (not (fmt in _map)):
             if (log):
                self.log(20, 'Caching direct url for new format {0:d}.'.format(fmt))
-            _map[fmt] = '{}&signature={}'.format(url, sig)
+            _map[fmt] = url
          rv += 1
       return rv
    
