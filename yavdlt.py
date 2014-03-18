@@ -1214,7 +1214,7 @@ class YTPlayListRef:
             continue
          
          try:
-            node_vids = arg2vidset(node_url, fallback=False)
+            node_vids = spec2vidset(node_url, fallback=False)
          except ValueError:
             continue
          
@@ -1296,7 +1296,7 @@ class YTUserRef:
 
         n_l = n_ls[0]
         watch_url = n_l.childNodes[0].nodeValue
-        node_vids = arg2vidset(watch_url, fallback=False)
+        node_vids = spec2vidset(watch_url, fallback=False)
 
         for vid in node_vids:
            vi = YTVideoInfo(vid, pts)
@@ -1321,9 +1321,9 @@ class YTUserRef:
 
 
 # ---------------------------------------------------------------- Cmdline / config interpretation code
-def arg2vidset(s, fallback=True):
+def spec2vidset(s, fallback=True):
    import logging
-   log = logging.getLogger('arg2vidset').log
+   log = logging.getLogger('spec2vidset').log
    res = (
       re.compile('^(?P<vid>[A-Za-z0-9_-]{11})$'),
       re.compile('^https?://(?:www.)?youtube(?:-nocookie)?\.[^\./]+\.?/+watch?.*v=(?P<vid>[A-Za-z0-9_-]{11})(?:$|[^A-Za-z0-9_-])'),
@@ -1342,7 +1342,7 @@ def arg2vidset(s, fallback=True):
          log(20, "{0!a} doesn't look like a direct video spec ... treating as url to embedding document." .format(s))
          rv = set()
          for url in get_embedded_yturls(s):
-            rv.update(arg2vidset(url, fallback=False))
+            rv.update(spec2vidset(url, fallback=False))
          return rv
    
    raise ValueError('Unable to get video id from string {0!a}.'.format(s))
@@ -1414,6 +1414,8 @@ class Config:
       self.fmt = None
       self.url_mangler = None
       self.urllib_handler_list = None
+      self.playlists = []
+      self.users = []
       self.playlist = None
       self.user = None
 
@@ -1488,8 +1490,8 @@ class Config:
       oa('-d', '--data-type', dest='dtype', help='Data types to download')
       oa('--fmt', type=int, dest='fmt', help="YT format number to use.")
       oa('--fpl', help='Pick format preference list.')
-      oa('--playlist', help='Parse (additional) video ids from specified playlist', metavar='PLAYLIST_ID')
-      oa('--user', help='Parse (additional) video ids from specified (space-separated) user video lists')
+      oa('--playlist', help='DEPRECATED: Parse (additional) video ids from specified playlist', metavar='PLAYLIST_ID')
+      oa('--user', help='DEPRECATED: Parse (additional) video ids from specified (space-separated) user video lists')
       oa('--list-url-manglers', dest='list_url_manglers', action='store_true', help='Print lists of known URL manglers and exit')
       oa('--url-mangler', '-u', dest='url_mangler', metavar='UMNAME', help='Fetch metadata pages through specified HTTP gateway')
       oa('--urllib-handler-list', '-H', dest='urllib_handler_list', metavar='UHLNAME', help='Use specified urllib handler list for HTTP fetches.')
@@ -1539,21 +1541,53 @@ class Config:
                continue
             vids_set.add(vid)
             rv.append(vid)
-   
-      for vid_str in self._args:
-         update_vids(arg2vidset(vid_str))
+
+      arg_handlers = {}
+      def reg_ah(type_str):
+        def reg_ah2(f):
+          arg_handlers[type_str] = f
+          return f
+        return reg_ah2
+
+      @reg_ah('pl')
+      def handle_pl(pl):
+        self.playlists.append(pl)
+      @reg_ah('user')
+      def handle_u(u):
+        self.users.append(u)
+      @reg_ah('v')
+      def handle_vid(vid):
+        update_vids((vid,))
+
+      for arg in self._args:
+         if not (':' in arg):
+           update_vids(spec2vidset(vid_str))
+           continue
+         (t, spec) = arg.split(':', 1)
+         try:
+           h = arg_handlers[t]
+         except KeyError:
+           raise ValueError('Unknown spec type {!a} in arg {!a}.'.format(t, arg))
+         h(spec)
    
       if (self.playlist):
-         plr = YTPlayListRef(self.playlist)
+         self.playlists.append(self.playlists)
+         self.log(30, '--playlist is deprecated; use pl:<id> args instead.')
+
+      for playlist in self.playlists:
+         plr = YTPlayListRef(playlist)
          plr.fetch_pl()
          update_vids(plr.vids)
 
       if not (self.user is None):
-         users = self.user.split()
-         for user in users:
-           ur = YTUserRef(user)
-           ur.fetch_vids()
-           update_vids(ur.get_vids())
+         self.log(30, '--user is deprecated; use user:<id> args instead.')
+         self.users.extend(self.user.split())
+
+      for user in self.users:
+         ur = YTUserRef(user)
+         ur.fetch_vids()
+         update_vids(ur.get_vids())
+
       return rv
    
    def _get_fpl(self):
