@@ -1561,7 +1561,7 @@ class Config:
 
       for arg in self._args:
          if not (':' in arg):
-           update_vids(spec2vidset(vid_str))
+           update_vids(spec2vidset(arg))
            continue
          (t, spec) = arg.split(':', 1)
          try:
